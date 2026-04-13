@@ -9,7 +9,7 @@
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![PyPI](https://img.shields.io/pypi/v/epublib.svg)](https://pypi.org/project/epublib/)
 [![CI](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml)
-[![codecov](https://codecov.io/gh/USERNAME/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/USERNAME/REPO)
+[![codecov](https://codecov.io/gh/infakum/epublib/main/graph/badge.svg)](https://codecov.io/gh/infakum/epublib)
 
 
 
