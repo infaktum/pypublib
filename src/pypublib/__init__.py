@@ -1,7 +1,7 @@
-"""Top-level package for epublib.
+"""Top-level package for pypublib.
 
 This file exposes commonly used submodules and classes so tests and users
-can import them as `from epublib import Book` or `from epublib.markdown import Html`.
+can import them as `from pypublib import Book` or `from pypublib.markdown import Html`.
 """
 
 __version__ = "0.1.1"

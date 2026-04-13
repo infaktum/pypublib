@@ -3,9 +3,9 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-from epublib.epub import publish_book
+from pypublib.epub import publish_book
 from string import Template
-from epublib.book import Book, Chapter
+from pypublib.book import Book, Chapter
 
 
 def main():

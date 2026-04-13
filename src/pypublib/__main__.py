@@ -1,3 +1,3 @@
 def main() -> None:
     from . import __version__
-    print(f"epublib {__version__}")
+    print(f"pypublib {__version__}")

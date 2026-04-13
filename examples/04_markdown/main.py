@@ -3,9 +3,9 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-from epublib.markdown import MarkdownConverter, Html
-from epublib.book import Book, Chapter
-from epublib.epub import publish_book, validate_book
+from pypublib.markdown import MarkdownConverter, Html
+from pypublib.book import Book, Chapter
+from pypublib.epub import publish_book, validate_book
 
 def main():
 

@@ -4,7 +4,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "epublib"
+name = "pypublib"
 version = "0.1.0"
 description = "A Python library for reading and writing EPUB files."
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -24,15 +24,15 @@ classifiers = [
 keywords = ["epub", "epub3", "ebook", "markdown", "epub-generator"]
 
 [project.urls]
-Homepage = "https://github.com/infaktum/epublib"
-Repository = "https://github.com/infaktum/epublib"
+Homepage = "https://github.com/infaktum/pypublib"
+Repository = "https://github.com/infaktum/pypublib"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["epublib*"]
+include = ["pypublib*"]
 
 
 
 [project.scripts]
-epub = "epublib.__main__:main"
+epub = "pypublib.__main__:main"
 

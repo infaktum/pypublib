@@ -223,7 +223,6 @@ TEMPLATE_NAV = f'''<?xml version="1.0" encoding="utf-8"?>
     <ol>
       <li>
         <a epublib:type="toc" href="#toc">Inhaltsverzeichnis</a>
-        <a epublib:type="toc" href="#toc">Inhaltsverzeichnis</a>
       </li>
     </ol>
   </nav>
@@ -309,8 +308,8 @@ class Book:
         self.guide = []
         self.cover = None
         if not self.identifier:
-            self.identifier = "epublib:" + str(uuid.uuid4())
-        self.add_metadata("generator", "epublib 0.1.0")
+            self.identifier = "pypublib:" + str(uuid.uuid4())
+        self.add_metadata("generator", "pypublib 0.1.0")
 
 
     def from_contents(self, contents: dict) -> None:

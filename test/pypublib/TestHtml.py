@@ -1,5 +1,5 @@
 import unittest
-from epublib.markdown import Html
+from pypublib.markdown import Html
 
 class TestHtml(unittest.TestCase):
     def test_p(self):

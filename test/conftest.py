@@ -13,7 +13,7 @@ if os.path.isdir(SRC) and SRC not in sys.path:
 # Optional: also add project root so tests that import test fixtures or
 # examples relative to the repo can find them. If added, append it after
 # `src` so the package in `src/` is preferred over the top-level folder
-# named `epublib` (which would shadow the real package).
+# named `pypublib` (which would shadow the real package).
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 

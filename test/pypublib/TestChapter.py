@@ -1,6 +1,6 @@
 import unittest
 
-from epublib.book import Chapter
+from pypublib.book import Chapter
 
 class TestChapter(unittest.TestCase):
 

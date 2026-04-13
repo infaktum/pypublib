@@ -1,4 +1,4 @@
-# epublib
+# PyPubLib
 
 ## A Python library for ePub files
 
@@ -7,13 +7,10 @@
 [![EPUB](https://img.shields.io/badge/EPUB-supported-green.svg)](https://www.w3.org/publishing/epub32/epub-spec.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![PyPI](https://img.shields.io/pypi/v/epublib.svg)](https://pypi.org/project/epublib/)
-[![CI](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml)
-[![CI](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/epublib/actions/workflows/ci-tests.yml)
-[![codecov](https://codecov.io/gh/infaktum/epublib/branch/main/graph/badge.svg)](https://codecov.io/gh/infaktum/epublib)
-
-
-
+[![PyPI](https://img.shields.io/pypi/v/pypublib.svg)](https://pypi.org/project/pypublib/)
+[![CI](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml)
+[![CI](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml)
+[![codecov](https://codecov.io/gh/infaktum/pypublib/branch/main/graph/badge.svg)](https://codecov.io/gh/infaktum/pypublib)
 
 
 
@@ -49,14 +46,14 @@ Summarizing, an EPUB file contains:
 - **NCX (Navigation Center eXtended):** Used in EPUB 2 for the table of contents.
 
 
-## Features of epublib
+## Features of pypublib
 
 As mentioned before the structure of an EPUB book is rather simple, and there are already some Python libs that can help you create EPUB files. Furthermore there are some GUI tools that can help you create EPUB files, notably 
 
 - [Sigil](https://sigil-ebook.com/): A great tool for visually organizing and editing single EPUB files 
 - [Calibre](https://calibre-ebook.com/): A powerful eBook management tool that can convert various formats to EPUB and vice versa
 
-`epublib` aims to provide a simple and easy-to-use interface for creating and manipulating EPUB files programmatically. It focuses on generating the essential components of an EPUB file, such as `content.opf`, `nav.xhtml`, and `toc.ncx`, while allowing for easy integration with existing Python projects. EPUB books can be created from scratch or imported for modification. 
+`pypublib` aims to provide a simple and easy-to-use interface for creating and manipulating EPUB files programmatically. It focuses on generating the essential components of an EPUB file, such as `content.opf`, `nav.xhtml`, and `toc.ncx`, while allowing for easy integration with existing Python projects. EPUB books can be created from scratch or imported for modification. 
 
 Key features include:
 
@@ -103,17 +100,19 @@ To create a new EPUB file, you simply
 6. Finally, call `publish_epub` to generate the EPUB file.
 
 ### Example - Create a simple EPUB file
+
 ```python
-from epublib.book import Book, Chapter
-from epublib.epub import publish_book, validate_book
+from pypublib.book import Book, Chapter
+from pypublib.epub import publish_book, validate_book
 
 book = Book()
-chapter1 = Chapter.from_content(href="Chapter1.xhtml",title="Chapter 1", content="<1>Hello world!</h1>", styles="styles.css")
+chapter1 = Chapter.from_content(href="Chapter1.xhtml", title="Chapter 1", content="<1>Hello world!</h1>",
+                                styles="styles.css")
 chapter1.content += "<p>This is the first chapter of the book.</p>"
 book.add_chapter(chapter1)
 book.add_style("styles.css", "body { font-family: Arial, sans-serif; }")
 book.title = "My First EPUB"
-book.author="John Doe"
+book.author = "John Doe"
 validate_book(book)
 publish_book(book, "book.epub")
 ```
@@ -124,7 +123,7 @@ The directory `examples` contains some example scripts demonstrating the use of 
 
 ## Requirements
 
-epublib needs only lxml for parsing and generating XML/HTML files. It supports Python 3.10 and higher.
+pypublib needs only lxml for parsing and generating XML/HTML files. It supports Python 3.10 and higher.
 
 - Python 3.10 or higher
 - lxml~=5.2.2 

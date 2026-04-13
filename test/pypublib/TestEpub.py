@@ -1,13 +1,13 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from epublib import epub
-from epublib.book import Book, Chapter
+from pypublib import epub
+from pypublib.book import Book, Chapter
 
 class TestEpub(unittest.TestCase):
-    @patch("epublib.epub.os.path.isfile", return_value=True)
-    @patch("epublib.epub.zipfile.is_zipfile", return_value=True)
-    @patch("epublib.epub.extract_epub_content")
-    @patch("epublib.epub.create_book")
+    @patch("pypublib.epub.os.path.isfile", return_value=True)
+    @patch("pypublib.epub.zipfile.is_zipfile", return_value=True)
+    @patch("pypublib.epub.extract_epub_content")
+    @patch("pypublib.epub.create_book")
     def test_read_book_success(self, mock_create_book, mock_extract, mock_is_zip, mock_is_file):
         mock_extract.return_value = {"metadata": {}, "chapters": {}, "styles": {}, "images": {}, "fonts": {}, "spine": [], "guide": [], "cover": None}
         mock_create_book.return_value = "BookObject"
@@ -25,12 +25,12 @@ class TestEpub(unittest.TestCase):
             "guide": [],
             "cover": None
         }
-        with patch("epublib.epub.Chapter.from_html", return_value=Chapter.from_content("chapter1.html", "Chapter 1","<h1>Chapter 1</h1>")):
+        with patch("pypublib.epub.Chapter.from_html", return_value=Chapter.from_content("chapter1.html", "Chapter 1","<h1>Chapter 1</h1>")):
             book = epub.create_book(contents)
             self.assertEqual(book.metadata["title"], "Test")
             self.assertIn("chapter1.html", book.chapters)
 
-    @patch("epublib.epub.zipfile.ZipFile")
+    @patch("pypublib.epub.zipfile.ZipFile")
     def test_extract_epub_content(self, mock_zip):
         mock_zip.return_value.__enter__.return_value.namelist.return_value = ["OEBPS/content.opf", "OEBPS/chapter1.xhtml", "OEBPS/style.css"]
         mock_zip.return_value.__enter__.return_value.read.side_effect = lambda name: b"<xml/>" if name.endswith("content.opf") else b"chapter" if name.endswith(".xhtml") else b"css"
@@ -39,7 +39,7 @@ class TestEpub(unittest.TestCase):
         self.assertIn("styles", result)
         self.assertIn("metadata", result)
 
-    @patch("epublib.epub.save_book")
+    @patch("pypublib.epub.save_book")
     def test_publish_book(self, mock_save):
         book = MagicMock()
         epub.publish_book(book, "output.epub")
@@ -94,10 +94,10 @@ class TestEpub(unittest.TestCase):
         result = epub.edit_chapter_tags(chapter, ["p=foo=bar"])
         self.assertIn("bar", result.html)
 
-    @patch("epublib.epub.collect_used_selectors", return_value={".used"})
-    @patch("epublib.epub.process_css_file", return_value=[".unused"])
+    @patch("pypublib.epub.collect_used_selectors", return_value={".used"})
+    @patch("pypublib.epub.process_css_file", return_value=[".unused"])
     def test_clean_unused_styles(self, mock_process, mock_collect):
-        with patch("epublib.epub.os.walk", return_value=[("root", [], ["style.css"])]):
+        with patch("pypublib.epub.os.walk", return_value=[("root", [], ["style.css"])]):
             epub.clean_unused_styles("content_dir")
             mock_process.assert_called()
 

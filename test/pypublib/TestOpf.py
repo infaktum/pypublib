@@ -2,7 +2,7 @@ import unittest
 import tempfile
 import os
 
-from epublib.book import Opf
+from pypublib.book import Opf
 
 
 class TestOpfMethods(unittest.TestCase):

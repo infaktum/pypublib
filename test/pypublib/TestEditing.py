@@ -3,8 +3,8 @@ import unittest
 from lxml import etree
 from lxml import html as lhtml
 
-from epublib.epub import edit_chapter, edit_chapter_tag, edit_all_chapters
-from epublib.book import Chapter, Book
+from pypublib.epub import edit_chapter, edit_chapter_tag, edit_all_chapters
+from pypublib.book import Chapter, Book
 
 TEST_CONTENT= """
     <p>Das ist ein Test. Test ist wichtig.</p>

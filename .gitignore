@@ -30,7 +30,7 @@ var/
 wheels/
 share/python-wheels/
 *.egg-info/
-epublib.egg-info/
+pypublib.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
@@ -205,9 +205,9 @@ cython_debug/
 
 /.idea/copilot.data.migration.edit.xml
 /.idea/easycode.ignore
-/.idea/epublib.iml
+/.idea/pypublib.iml
 /.idea/easycode/codebase-v2.xml
-/test/epublib/TestBook.py
+/test/pypublib/TestBook.py
 /.idea/copilot.data.migration.agent.xml
 /.idea/dictionaries/project.xml
 /.idea/workspace.xml

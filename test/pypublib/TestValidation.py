@@ -1,6 +1,6 @@
 import unittest
-from epublib.book import Book, Chapter
-from epublib.epub import validate_book_resources, validate_metadata
+from pypublib.book import Book, Chapter
+from pypublib.epub import validate_book_resources, validate_metadata
 
 class TestValidateBookResources(unittest.TestCase):
     def setUp(self):

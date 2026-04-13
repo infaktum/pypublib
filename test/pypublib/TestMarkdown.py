@@ -1,5 +1,5 @@
 import unittest
-from epublib.markdown import MarkdownConverter, Html
+from pypublib.markdown import MarkdownConverter, Html
 
 class TestMarkdownConverter(unittest.TestCase):
     def test_strong_or_em(self):

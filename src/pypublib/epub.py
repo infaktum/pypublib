@@ -26,7 +26,7 @@ import os
 import zipfile
 import tempfile
 from lxml import etree
-from epublib.book import Book, Chapter, Opf, NS
+from pypublib.book import Book, Chapter, Opf, NS
 
 #------------------------------------- Templates -----------------------
 

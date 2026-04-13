@@ -48,7 +48,7 @@ jobs:
           mkdir -p reports
           # run pytest, write JUnit XML and coverage XML per Python version
           python -m pytest --junitxml=reports/junit-${{ matrix.python-version }}.xml \
-            --cov=epublib --cov-report=xml:reports/coverage-${{ matrix.python-version }}.xml -q
+            --cov=pypublib --cov-report=xml:reports/coverage-${{ matrix.python-version }}.xml -q
 
       - name: Upload test reports (JUnit & coverage)
         uses: actions/upload-artifact@v4

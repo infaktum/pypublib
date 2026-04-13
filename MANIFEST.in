@@ -3,7 +3,7 @@ include README.md
 include requirements.txt
 recursive-include examples *
 recursive-include docs *
-recursive-include src/epublib *.py *.css *.jpg *.jpeg *.png *.gif *.smil *.xhtml
-recursive-include src/epublib *.html
+recursive-include src/pypublib *.py *.css *.jpg *.jpeg *.png *.gif *.smil *.xhtml
+recursive-include src/pypublib *.html
 global-exclude __pycache__
 
