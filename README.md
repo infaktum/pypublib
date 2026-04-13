@@ -7,8 +7,6 @@
 [![EPUB](https://img.shields.io/badge/EPUB-supported-green.svg)](https://www.w3.org/publishing/epub32/epub-spec.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![PyPI](https://img.shields.io/pypi/v/pypublib.svg)](https://pypi.org/project/pypublib/)
-[![CI](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml)
 [![CI](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml/badge.svg)](https://github.com/infaktum/pypublib/actions/workflows/ci-tests.yml)
 [![codecov](https://codecov.io/gh/infaktum/pypublib/branch/main/graph/badge.svg)](https://codecov.io/gh/infaktum/pypublib)
 
@@ -34,7 +32,7 @@ The single most important file in an EPUB is the **OPF** file (_Open Publication
 
 * the **metadata**: tile, author, language, publisher, etc.
 * the **manifest**: the list of included files 
-* the*spine**: defines the reading order of the book
+* the **spine**: defines the reading order of the book
 * an optional **guide**: defines references to key parts of the book
 
 Summarizing, an EPUB file contains:
