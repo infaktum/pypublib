@@ -55,5 +55,26 @@ class TestOpfMethods(unittest.TestCase):
         spine = self.opf.spine
         self.assertIn("chap1", spine)
 
+    def test_from_file_without_cover(self):
+        opf_xml = """<package xmlns='http://www.idpf.org/2007/opf' version='3.0'>
+          <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>
+            <dc:title>T</dc:title>
+          </metadata>
+          <manifest>
+            <item id='c1' href='c1.xhtml' media-type='application/xhtml+xml'/>
+          </manifest>
+          <spine><itemref idref='c1'/></spine>
+        </package>
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "content.opf")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(opf_xml)
+            opf = Opf.from_file(path)
+
+        self.assertIsNone(opf.cover)
+        self.assertEqual(opf.guide, [])
+        self.assertEqual(opf.spine, ["c1"])
+
 if __name__ == "__main__":
     unittest.main()

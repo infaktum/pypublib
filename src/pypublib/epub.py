@@ -27,7 +27,12 @@ import zipfile
 
 from lxml import etree
 
+import pypublib
 from pypublib.book import Book, Chapter, Opf, NS
+
+# ---------------------------------------- Logger ------------------------------------------------
+
+LOGGER = pypublib.get_logger(__name__)
 
 # ------------------------------------- Templates -----------------------
 
@@ -71,30 +76,30 @@ def read_book(file_path: str) -> Book | None:
     try:
         # Check for valid file path
         if not isinstance(file_path, str) or not file_path.strip():
-            print("[read_book] Invalid file path.")
+            LOGGER.error("[read_book] Invalid file path.")
             return None
         if not os.path.isfile(file_path):
-            print(f"[read_book] File not found: {file_path}")
+            LOGGER.error(f"[read_book] File not found: {file_path}")
             return None
         if not zipfile.is_zipfile(file_path):
-            print(f"[read_book] Not a valid ZIP/EPUB file: {file_path}")
+            LOGGER.error(f"[read_book] Not a valid ZIP/EPUB file: {file_path}")
             return None
 
         contents = extract_epub_content(file_path)
         book = create_book(contents)
-        print(f"EPUB parsed successfully: {book}")
+        LOGGER.info(f"EPUB parsed successfully: {book}")
         return book
 
     except zipfile.BadZipFile as e:
-        print(f"[read_book] Invalid EPUB container: {e}")
+        LOGGER.error(f"[read_book] Invalid EPUB container: {e}")
     except UnicodeDecodeError as e:
-        print(f"[read_book] Encoding error while reading EPUB: {e}")
+        LOGGER.error(f"[read_book] Encoding error while reading EPUB: {e}")
     except KeyError as e:
-        print(f"[read_book] Missing required data in EPUB: {e}")
+        LOGGER.error(f"[read_book] Missing required data in EPUB: {e}")
     except PermissionError as e:
-        print(f"[read_book] Permission denied: {e}")
+        LOGGER.error(f"[read_book] Permission denied: {e}")
     except Exception as e:
-        print(f"[read_book] Unexpected error: {e}")
+        LOGGER.error(f"[read_book] Unexpected error: {e}")
 
     return None
 
@@ -304,7 +309,7 @@ def save_book(book: Book, file_path):
                     if rel_path != "mimetype":
                         epub.write(full_path, rel_path, compress_type=zipfile.ZIP_DEFLATED)
 
-    print(f"Book has been saved as {file_path}")
+    LOGGER.info(f"Book has been saved as {file_path}")
 
 
 # ------------------------------- Validation -----------------------

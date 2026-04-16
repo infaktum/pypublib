@@ -28,6 +28,12 @@ from string import Template
 import lxml.html as lhtml
 from lxml import etree
 
+import pypublib
+
+# ---------------------------------------- Logger ------------------------------------------------
+
+LOGGER = pypublib.get_logger(__name__)
+
 # ---------------------------- Template for a Cover Page -----------------------------------
 
 TEMPLATE_COVER = """<?xml version='1.0' encoding='utf-8'?>
@@ -70,7 +76,7 @@ class Chapter:
     The Chapter structure stores only the BODY content of this file, which can be modified
     by accessing the content attribute. The HEAD part of the file is generated on the fly by
     inserting the stored title and stylesheet attributes in a template. This regeneration
-    occurs every time when the read-only html property is accessed.
+    occurs every time when the read-only HTML property is accessed.
 
     Attributes:
         href (str): Filename inside the EPUB archive.
@@ -804,8 +810,8 @@ class Book:
                 (series_name, series_index).
 
         Example:
-            >>> book.series = "My Series"
-            >>> book.series = ("My Series", 1)
+            >>> pypublib.book.series = "My Series"
+            >>> pypublib.book.series = ("My Series", 1)
         """
         if isinstance(value, tuple):
             self.metadata["series"] = value[0].strip()

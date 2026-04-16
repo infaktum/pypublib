@@ -47,7 +47,7 @@ Summarizing, an EPUB file contains:
 ## Features of pypublib
 
 As mentioned before the structure of an EPUB book is rather simple, and there are already some Python libs that can help
-you create EPUB files. Furthermore there are some GUI tools that can help you create EPUB files, notably
+you create EPUB files. Furthermore, there are some GUI tools that can help you create EPUB files, notably
 
 - [Sigil](https://sigil-ebook.com/): A great tool for visually organizing and editing single EPUB files
 - [Calibre](https://calibre-ebook.com/): A powerful eBook management tool that can convert various formats to EPUB and
@@ -131,4 +131,4 @@ EPUB files.
 pypublib needs only lxml for parsing and generating XML/HTML files. It supports Python 3.10 and higher.
 
 - Python 3.10 or higher
-- lxml 5.2.2 or higher 
+- lxml 6.0.4 or higher 

@@ -1,4 +1,7 @@
 import unittest
+from unittest.mock import patch
+
+from lxml import etree
 
 from pypublib.book import Chapter
 
@@ -39,6 +42,41 @@ class TestChapter(unittest.TestCase):
         ch.title = "Neuer Titel"
         self.assertEqual(ch.title, "Neuer Titel")
         self.assertEqual(ch.href, "Neuer Titel.xhtml")
+
+    def test_from_xhtml_invalid_raises_xml_syntax_error(self):
+        with self.assertRaises(etree.XMLSyntaxError):
+            Chapter.from_xhtml("broken.xhtml", "<html><body><p>broken")
+
+    def test_from_html_parses_title_styles_and_body(self):
+        html = """<?xml version='1.0'?>
+        <html><head><title>T</title><link rel='stylesheet' href='a.css'/></head>
+        <body><p>X</p></body></html>"""
+        chapter = Chapter.from_html("c.xhtml", html)
+        self.assertEqual(chapter.title, "T")
+        self.assertEqual(chapter.styles, ["a.css"])
+        self.assertIn("<p>X</p>", chapter.content)
+
+    def test_from_cover_and_images_and_repr(self):
+        chapter = Chapter.from_cover("cover.jpg")
+        self.assertEqual(chapter.href, "Cover.xhtml")
+        self.assertIn("cover.jpg", chapter.images)
+        self.assertIn("Chapter(", repr(chapter))
+
+    def test_add_style_avoids_duplicates(self):
+        chapter = Chapter.from_content("c.xhtml", "T", "<p>x</p>")
+        chapter.add_style("main.css")
+        chapter.add_style("main.css")
+        self.assertEqual(chapter.styles, ["main.css"])
+
+    def test_html_setter_currently_recurses(self):
+        chapter = Chapter.from_content("c.xhtml", "T", "<p>x</p>")
+        with self.assertRaises(RecursionError):
+            chapter.html = "<html></html>"
+
+    def test_from_xhtml_wraps_parser_error_as_value_error(self):
+        with patch("pypublib.book.etree.fromstring", side_effect=etree.ParserError("bad")):
+            with self.assertRaises(ValueError):
+                Chapter.from_xhtml("broken.xhtml", "<html/>")
 
 
 if __name__ == '__main__':
