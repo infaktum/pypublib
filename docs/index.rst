@@ -1,14 +1,17 @@
-Welcome to pyhex's documentation!
-=================================
+Documentation of PyPubLib
+=========================
 
 .. toctree::
    :maxdepth: 2
 
+   README
    api/modules
+
+
 
 Introduction
 ------------
 
-This documentation exposes the public API of the project using Sphinx
-autodoc and Napoleon (Google/NumPy style docstrings supported).
+`pypublib` is a lightweight Python library for creating and manipulating eBooks in the EPUB format.
+
 
