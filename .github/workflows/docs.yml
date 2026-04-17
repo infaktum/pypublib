@@ -33,6 +33,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements/docs.txt
 
+      - name: Copy README  to docs
+        run: |
+          cp README.md docs/
+
+      - name: Copy images to    docs
+        run: |
+          mkdir -p docs/images
+          cp -r images/* docs/images/ 
+
       - name: Generate API docs with sphinx-apidoc (if modules exist)
         run: |
           set -e
