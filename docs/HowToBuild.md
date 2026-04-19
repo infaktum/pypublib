@@ -23,7 +23,7 @@ If you added or changed modules under `src/`, regenerate the API rst files
 with sphinx-apidoc:
 
 ````
-sphinx-apidoc -o docs/api src/pypublib src/pypublib --force --separate --module-first
+sphinx-apidoc -o docs/api src/pypublib --force --separate --module-first
 ````
 
 Build the HTML documentation

@@ -1,0 +1,125 @@
+name: Release and publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Enter the tag to release (for example: v0.1.1).'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+    steps:
+      - name: Checkout repository (fetch full history and tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        id: pip-cache
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}-py-${{ env.PYTHON_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build setuptools wheel twine
+
+      - name: Build sdist and wheel
+        run: |
+          rm -rf dist
+          python -m build --sdist --wheel --outdir dist
+
+      - name: Resolve and validate release tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Could not determine release tag."
+            exit 1
+          fi
+
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag does not exist in repository: $TAG"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from tag or commit
+        id: release_notes
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # Try annotated tag message first
+          NOTES=$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')
+          if [ -z "$NOTES" ]; then
+            # fallback to tagged commit message
+            NOTES=$(git log -1 --pretty=%B)
+          fi
+          echo "$NOTES" > release-notes.txt
+          # Export via GITHUB_OUTPUT so subsequent steps can consume it
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload dist/*
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body: ${{ steps.release_notes.outputs.body }}
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+
+      - name: Publish to PyPI (only when token present)
+        if: ${{ env.TEST_PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_PASSWORD: ${{ env.TEST_PYPI_API_TOKEN }}
+        run: |
+          # Simple retry loop for network resilience
+          RETRIES=3
+          COUNT=0
+          until [ $COUNT -ge $RETRIES ]
+          do
+            python -m twine upload --non-interactive -u __token__ -p "$TWINE_PASSWORD" --repository testpypi dist/* && break
+            COUNT=$((COUNT+1))
+            echo "Upload attempt $COUNT failed; retrying in $((COUNT * 5))s..."
+            sleep $((COUNT * 5))
+          done
+          if [ $COUNT -ge $RETRIES ]; then
+            echo "PyPI upload failed after $RETRIES attempts"
+            exit 1
+          fi
+
