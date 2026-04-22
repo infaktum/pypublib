@@ -29,6 +29,18 @@ class TestChapter(unittest.TestCase):
         self.assertEqual(ch.title, "Kapitel 1")
         self.assertEqual(ch.styles, ["main.css"])
 
+    def test_from_xhtml_strips_href_to_filename(self):
+        html = """
+        <html xmlns="http://www.w3.org/1999/xhtml">
+          <head><title>Kapitel</title></head>
+          <body>Text</body>
+        </html>
+        """
+
+        ch = Chapter.from_xhtml("ordner/unterordner/kap1.xhtml", html)
+
+        self.assertEqual(ch.href, "ordner/unterordner/kap1.xhtml")
+
     def test_from_content_removes_body_tags(self):
         html = "<body>Testinhalt</body>"
         ch = Chapter.from_content("test.xhtml", "Titel", html)

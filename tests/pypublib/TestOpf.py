@@ -41,8 +41,8 @@ class TestOpfMethods(unittest.TestCase):
 
     def test_manifest(self):
         manifest = self.opf.manifest
-        self.assertEqual(manifest[0]["id"], "chap1")
-        self.assertEqual(manifest[1]["id"], "cover")
+        self.assertEqual(manifest["chap1"]["href"], "kapitel.xhtml")
+        self.assertEqual(manifest["cover"]["href"], "cover.png")
 
     def test_metadata(self):
         meta = self.opf.metadata
@@ -86,6 +86,7 @@ class TestOpfMethods(unittest.TestCase):
         self.assertIn("manifest=2", representation)
         self.assertIn("spine=1", representation)
         self.assertIn("guide=1", representation)
+
 
 if __name__ == "__main__":
     unittest.main()

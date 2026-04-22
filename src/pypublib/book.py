@@ -28,9 +28,8 @@ from os.path import splitext, basename
 from string import Template
 from typing import List, Dict
 
-from lxml import etree
-
 import pypublib
+from lxml import etree
 from pypublib.chapter import Chapter
 
 # ---------------------------------------- Logger ------------------------------------------------
@@ -216,6 +215,23 @@ class Book:
             Chapter | None: The chapter with the specified href, or None if not found.
         """
         return self.chapters.get(href)
+
+    def remove_chapter(self, chapter: Chapter | str) -> None:
+        """
+        Removes the chapter from the book.
+
+        Args:
+            chapter (str): The chapter or the href of the chapter to remove.
+
+        Returns:
+            None.
+        """
+        if isinstance(chapter, Chapter):
+            href = chapter.href
+        else:
+            href = chapter
+        if href in self.chapters:
+            del self.chapters[href]
 
     # ---------------------------- Stylesheet Management ----------------------------------
 
@@ -712,8 +728,8 @@ class Book:
             The OPF file is the central descriptor of an EPUB archive structure.
         """
 
-        spine = [chapter.href for chapter in self.chapters.values() if
-                 chapter.href != "nav.xhtml" and chapter.href != "toc.ncx"]
+        spine = [href for (href, chapter) in self.chapters.items() if
+                 href != "nav.xhtml" and href != "toc.ncx"]
 
         metadata_items = "\n".join(
             f'<dc:{key}>{value}</dc:{key}>' for key, value in self.metadata.items() if value and key in DC_METADATA)
@@ -847,20 +863,21 @@ class Opf:
         ]
 
     @property
-    def manifest(self) -> List[Dict[str, str]]:
+    def manifest(self) -> Dict[str, Dict[str, str]]:
         """
         Get all manifest items from the OPF.
 
         Reads all <item> elements from the <manifest> section and returns them as
-        a list of dictionaries with keys 'id', 'href', and 'media-type'.
+        a dictionary keyed by item id with values containing 'href' and
+        'media-type'.
 
         Returns:
-            list[dict[str, str]]: List of manifest item dictionaries.
+            dict[str, dict[str, str | None]]: Manifest item mapping keyed by id.
         """
-        return [
-            {"id": el.get("id"), "href": el.get("href"), "media-type": el.get("media-type")}
+        return {
+            el.get("id"): {"href": el.get("href"), "media-type": el.get("media-type")}
             for el in self.xml.xpath(".//*[local-name()='manifest']/*[local-name()='item']")
-        ]
+        }
 
     @property
     def metadata(self) -> Dict[str, str | List[str]]:
@@ -917,4 +934,3 @@ class Opf:
             f"Opf(title={title!r}, creator={creator!r}, cover={self.cover!r}, "
             f"manifest={len(self.manifest)}, spine={len(self.spine)}, guide={len(self.guide)})"
         )
-

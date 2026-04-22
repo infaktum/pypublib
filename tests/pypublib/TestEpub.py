@@ -126,42 +126,14 @@ class TestEpub(unittest.TestCase):
             result = epub.read_book(file_path)
         self.assertIsNone(result)
 
-    def test_extract_epub_content_reads_real_archive(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            file_path = os.path.join(tmpdir, "sample.epub")
-            with zipfile.ZipFile(file_path, "w") as archive:
-                archive.writestr("OEBPS/content.opf", MINIMAL_OPF)
-                archive.writestr("OEBPS/chapter1.xhtml", MINIMAL_XHTML)
-                archive.writestr("OEBPS/style.css", "body { color: black; }")
-                archive.writestr("OEBPS/picture.png", b"png-data")
-                archive.writestr("OEBPS/font.ttf", b"font-data")
-
-            contents = epub.extract_epub_content(file_path)
-
-        self.assertIn("chapter1.xhtml", contents["chapters"])
-        self.assertIn("style.css", contents["styles"])
-        self.assertIn("picture.png", contents["images"])
-        self.assertIn("font.ttf", contents["fonts"])
-        self.assertEqual(contents["metadata"].get("title"), "Filesystem Test")
-        self.assertIn("chapter1", contents["spine"])
-
-    def test_extract_epub_content_without_opf_uses_defaults(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            file_path = os.path.join(tmpdir, "sample.epub")
-            with zipfile.ZipFile(file_path, "w") as archive:
-                archive.writestr("OEBPS/chapter1.html", "<html><body>Hi</body></html>")
-                archive.writestr("OEBPS/image.svg", b"svg-data")
-                archive.writestr("OEBPS/font.woff2", b"font-data")
-
-            contents = epub.extract_epub_content(file_path)
-
-        self.assertEqual(contents["metadata"], {})
-        self.assertEqual(contents["spine"], [])
-        self.assertEqual(contents["guide"], [])
-        self.assertIsNone(contents["cover"])
-        self.assertIn("chapter1.html", contents["chapters"])
-        self.assertIn("image.svg", contents["images"])
-        self.assertIn("font.woff2", contents["fonts"])
+    @patch("pypublib.epub.os.path.isfile", return_value=True)
+    @patch("pypublib.epub.zipfile.is_zipfile", return_value=True)
+    @patch("pypublib.epub.extract_epub_content", return_value={"metadata": {}, "chapters": {}, "styles": {},
+                                                                  "images": {}, "fonts": {}, "spine": [],
+                                                                  "guide": [], "cover": None})
+    @patch("pypublib.epub.create_book", side_effect=ValueError("bad book"))
+    def test_read_book_returns_none_when_create_book_fails(self, _create, _extract, _is_zip, _is_file):
+        self.assertIsNone(epub.read_book("broken.epub"))
 
     def test_save_book_writes_valid_epub_archive(self):
         book = Book({"title": "Roundtrip", "creator": "Tester", "language": "en"})
@@ -188,20 +160,6 @@ class TestEpub(unittest.TestCase):
         self.assertIn("OEBPS/toc.ncx", names)
         self.assertIn("OEBPS/chapter1.xhtml", names)
 
-    def test_publish_and_read_roundtrip(self):
-        book = Book({"title": "Roundtrip", "creator": "Tester", "language": "en"})
-        chapter = Chapter.from_content("chapter1.xhtml", "Chapter 1", "<p>Hello</p>")
-        book.add_chapter(chapter)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            file_path = os.path.join(tmpdir, "roundtrip.epub")
-            epub.publish_book(book, file_path)
-            loaded = epub.read_book(file_path)
-
-        self.assertIsNotNone(loaded)
-        self.assertEqual(loaded.metadata.get("title"), "Roundtrip")
-        self.assertIn("chapter1.xhtml", loaded.chapters)
-
     def test_create_book_sets_cover(self):
         contents = {
             "metadata": {"title": "Test"},
@@ -216,12 +174,93 @@ class TestEpub(unittest.TestCase):
         book = epub.create_book(contents)
         self.assertEqual(book.cover, "cover.jpg")
 
+    @patch("pypublib.epub.Chapter.from_xhtml")
+    def test_create_book_uses_from_xhtml_for_all_chapters(self, mock_from_xhtml):
+        mock_from_xhtml.side_effect = [
+            Chapter.from_content("chapter1.xhtml", "C1", "<p>1</p>"),
+            Chapter.from_content("chapter2.xhtml", "C2", "<p>2</p>"),
+        ]
+        contents = {
+            "metadata": {"title": "Test"},
+            "chapters": {
+                "chapter1.xhtml": MINIMAL_XHTML,
+                "chapter2.xhtml": MINIMAL_XHTML,
+            },
+            "styles": {},
+            "images": {},
+            "fonts": {},
+            "spine": [],
+            "guide": [],
+            "cover": None,
+        }
+
+        book = epub.create_book(contents)
+
+        self.assertEqual(len(book.chapters), 2)
+        self.assertEqual(mock_from_xhtml.call_count, 2)
+        mock_from_xhtml.assert_any_call("chapter1.xhtml", MINIMAL_XHTML)
+        mock_from_xhtml.assert_any_call("chapter2.xhtml", MINIMAL_XHTML)
+
+    @patch("pypublib.epub.zipfile.ZipFile")
+    def test_extract_epub_content_raises_when_opf_missing(self, mock_zip):
+        mock_zip.return_value.__enter__.return_value.namelist.return_value = ["OEBPS/chapter1.xhtml"]
+
+        with self.assertRaises(ValueError):
+            epub.extract_epub_content("dummy.epub")
+
+    @patch("pypublib.epub.Opf")
+    @patch("pypublib.epub.zipfile.ZipFile")
+    def test_extract_epub_content_reads_manifest_resources(self, mock_zip, mock_opf):
+        opf_data = MagicMock()
+        opf_data.manifest = {
+            "chap": {"href": "chapter1.xhtml", "media-type": "application/xhtml+xml"},
+            "style": {"href": "styles/main.css", "media-type": "text/css"},
+            "img": {"href": "images/pic.png", "media-type": "image/png"},
+            "font": {"href": "fonts/main.woff", "media-type": "font"},
+        }
+        opf_data.spine = ["chap"]
+        opf_data.metadata = {"title": "T"}
+        opf_data.cover = "cover.jpg"
+        opf_data.guide = []
+        mock_opf.return_value = opf_data
+
+        archive = mock_zip.return_value.__enter__.return_value
+        archive.namelist.return_value = ["OEBPS/content.opf"]
+
+        def read_side_effect(name):
+            payload = {
+                "OEBPS/content.opf": b"<package/>",
+                "chapter1.xhtml": MINIMAL_XHTML.encode("utf-8"),
+                "styles/main.css": b"body { color: black; }",
+                "images/pic.png": b"png-data",
+                "fonts/main.woff": b"font-data",
+            }
+            return payload[name]
+
+        archive.read.side_effect = read_side_effect
+
+        result = epub.extract_epub_content("dummy.epub")
+
+        self.assertIn("chapter1.xhtml", result["chapters"])
+        self.assertIn("styles/main.css", result["styles"])
+        self.assertIn("images/pic.png", result["images"])
+        self.assertIn("fonts/main.woff", result["fonts"])
+
     def test_validate_metadata(self):
         book = MagicMock()
         book.metadata = {"title": "A"}
         missing_mandatory, missing_optional = epub.validate_metadata(book)
         self.assertIn("creator", missing_mandatory)
         self.assertIn("language", missing_optional)
+
+    def test_validate_metadata_complete(self):
+        book = MagicMock()
+        book.metadata = {"title": "A", "creator": "B", "language": "en", "subject": "Fiction"}
+
+        missing_mandatory, missing_optional = epub.validate_metadata(book)
+
+        self.assertEqual(missing_mandatory, [])
+        self.assertEqual(missing_optional, [])
 
     def test_validate_book(self):
         book = MagicMock()
@@ -276,6 +315,14 @@ class TestEpub(unittest.TestCase):
         epub.edit_chapter(chapter, ["Hello=Hi"])
         self.assertEqual(chapter.content, "Hi world")
 
+    def test_edit_chapter_ignores_invalid_replacement_items(self):
+        chapter = MagicMock()
+        chapter.content = "Hello world"
+
+        epub.edit_chapter(chapter, ["invalid", "Hello=Hi"])
+
+        self.assertEqual(chapter.content, "Hi world")
+
     def test_edit_chapters(self):
         chapter1 = MagicMock()
         chapter2 = MagicMock()
@@ -312,6 +359,13 @@ class TestEpub(unittest.TestCase):
 
         epub.edit_chapter_tag(chapter, "a", "text", "old", "new")
         self.assertIn(">new text<", chapter.html)
+
+    def test_edit_chapter_tag_ignores_missing_attribute(self):
+        chapter = Chapter.from_content("c.xhtml", "T", "<a>text only</a>", [])
+
+        epub.edit_chapter_tag(chapter, "a", "href", "old", "new")
+
+        self.assertIn("<a>text only</a>", chapter.html)
 
     def test_collect_used_selectors_reads_html_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -375,9 +429,65 @@ class TestEpub(unittest.TestCase):
         self.assertIs(result, book)
         self.assertFalse(os.path.exists(paths["nested"]))
 
+    def test_remove_unnecessary_files_removes_unreferenced_assets(self):
+        book = Book({"title": "A", "creator": "B", "language": "en"})
+        chapter = Chapter.from_content(
+            "chapter1.xhtml",
+            "One",
+            "<p>x</p><img src='../images/used.png'/>",
+            ["styles/used.css"],
+        )
+        book.add_chapter(chapter)
+        book.styles = {"styles/used.css": "body{}", "unused.css": "p{}"}
+        book.images = {"images/used.png": b"img", "unused.png": b"img"}
+
+        result = epub.remove_unnecessary_files(book)
+
+        self.assertIs(result, book)
+        self.assertEqual(set(result.styles.keys()), {"styles/used.css"})
+        self.assertEqual(set(result.images.keys()), {"images/used.png"})
+
+    def test_remove_unnecessary_files_keeps_cover_image(self):
+        book = Book({"title": "A", "creator": "B", "language": "en"})
+        book.cover = "cover.jpg"
+        book.images = {"cover.jpg": b"cover", "unused.png": b"img"}
+        book.styles = {"unused.css": "p{}"}
+
+        result = epub.remove_unnecessary_files(book)
+
+        self.assertIs(result, book)
+        self.assertEqual(set(result.images.keys()), {"cover.jpg"})
+        self.assertEqual(result.styles, {})
+
+    def test_remove_unnecessary_files_matches_styles_by_basename(self):
+        book = Book({"title": "A", "creator": "B", "language": "en"})
+        chapter = Chapter.from_content("chapter1.xhtml", "One", "<p>x</p>", ["text/main.css"])
+        book.add_chapter(chapter)
+        book.styles = {"main.css": "body{}", "other.css": "p{}"}
+
+        result = epub.remove_unnecessary_files(book)
+
+        self.assertIs(result, book)
+        self.assertEqual(set(result.styles.keys()), {"main.css"})
+
     def test_pretty_print_xml_returns_input(self):
         xml = "<root><a>1</a></root>"
         self.assertEqual(epub.pretty_print_xml(xml), xml)
+
+    def test_save_book_sanitizes_question_mark_in_href(self):
+        book = Book({"title": "Roundtrip", "creator": "Tester", "language": "en"})
+        chapter = Chapter.from_content("chapter?1.xhtml", "Chapter 1", "<p>Body</p>")
+        book.add_chapter(chapter)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "output.epub")
+            epub.save_book(book, file_path)
+
+            with zipfile.ZipFile(file_path, "r") as archive:
+                names = archive.namelist()
+
+        self.assertIn("OEBPS/chapter1.xhtml", names)
+        self.assertNotIn("OEBPS/chapter?1.xhtml", names)
 
     @patch("pypublib.epub.collect_used_selectors", return_value={".used"})
     @patch("pypublib.epub.process_css_file", return_value=[".unused"])

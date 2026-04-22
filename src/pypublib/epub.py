@@ -24,6 +24,8 @@ import os
 import re
 import tempfile
 import zipfile
+from pathlib import Path
+from typing import Dict
 
 from lxml import etree
 
@@ -160,27 +162,15 @@ def extract_epub_content(file_path):
             - 'guide': Guide references
             - 'cover': Cover image filename or None
     """
-    chapters, styles, images, fonts = {}, {}, {}, {}
-    manifest, spine, metadata = [], [], {}
+    chapters, styles, images, fonts, metadata = {}, {}, {}, {}, {}
+    manifest: Dict[str, Dict[str, str]] = {}
+    spine = []
     cover, guide = None, []
 
     with zipfile.ZipFile(file_path, 'r') as epub:
         # Find OPF file path
         opf_path = next((name for name in epub.namelist() if name.endswith('content.opf')), None)
-        for name in epub.namelist():
-            href = os.path.basename(name)
-            # Read chapters
-            if href.endswith('.xhtml') or href.endswith('.html'):
-                chapters[href] = epub.read(name).decode('utf-8')
-            # Read stylesheets
-            elif href.endswith('.css'):
-                styles[href] = epub.read(name).decode('utf-8')
-            # Read images
-            elif href.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.svg')):
-                images[href] = epub.read(name)
-            # Read fonts
-            elif href.lower().endswith(('.ttf', '.otf', '.woff', '.woff2')):
-                fonts[href] = epub.read(name)
+
         # Parse OPF file if present
         if opf_path:
             xml_str = epub.read(opf_path).decode('utf-8').encode("utf-8")
@@ -190,6 +180,26 @@ def extract_epub_content(file_path):
             metadata = opf.metadata
             cover = opf.cover
             guide = opf.guide
+        else:
+            LOGGER.error("No OPF entry found in ebook!")
+            raise ValueError()
+
+        # Read chapters as listed in the spine, cross-referenced with the manifest, to keep sorting order
+        for item in spine:
+            href = manifest[item]['href']
+            if href.endswith('.xhtml') or href.endswith('.html'):
+                chapters[href] = epub.read(href).decode('utf-8')
+
+        for _, item in manifest.items():
+            href, media_type = item['href'], item['media-type']
+            if 'css' in media_type:  # Read stylesheets
+                styles[item['href']] = epub.read(href).decode('utf-8')
+
+            if 'image' in media_type:  # Read images
+                images[item['href']] = epub.read(href)
+
+            if 'font' in media_type:  # Read fonts
+                fonts[href] = epub.read(href)
 
     return {
         'metadata': metadata,
@@ -265,7 +275,8 @@ def save_book(book: Book, file_path):
 
         # Save chapters
         for href, chapter in book.chapters.items():
-            chapter_path = os.path.join(oebps_dir, chapter.href).replace("?", "")
+            chapter_path = Path(os.path.join(oebps_dir, chapter.href).replace("?", ""))
+            chapter_path.parent.mkdir(parents=True, exist_ok=True)
             with open(chapter_path, "w", encoding="utf-8") as f:
                 f.write(chapter.html)
 
@@ -277,19 +288,22 @@ def save_book(book: Book, file_path):
 
         # Save styles
         for name, sheet in book.styles.items():
-            style_path = os.path.join(oebps_dir, name)
+            style_path = Path(os.path.join(oebps_dir, name))
+            style_path.parent.mkdir(parents=True, exist_ok=True)
             with open(style_path, "w", encoding="utf-8") as f:
                 f.write(sheet)
 
         # Save images
         for name, image in book.images.items():
-            image_path = os.path.join(oebps_dir, name)
+            image_path = Path(os.path.join(oebps_dir, name))
+            image_path.parent.mkdir(parents=True, exist_ok=True)
             with open(image_path, "wb") as f:
                 f.write(image)
 
         # Save fonts
         for name, font in book.fonts.items():
-            font_path = os.path.join(oebps_dir, name)
+            font_path = Path(os.path.join(oebps_dir, name))
+            font_path.parent.mkdir(parents=True, exist_ok=True)
             with open(font_path, "wb") as f:
                 f.write(font)
 
@@ -312,9 +326,6 @@ def save_book(book: Book, file_path):
                         epub.write(full_path, rel_path, compress_type=zipfile.ZIP_DEFLATED)
 
     LOGGER.info(f"Book has been saved as {file_path}")
-
-
-# ------------------------------- Validation -----------------------
 
 
 # ------------------------------- Validation -----------------------
@@ -555,6 +566,87 @@ def edit_chapter_tags(chapter, replacements):
                                  flags=re.DOTALL)
     chapter.html = content
     return chapter
+
+
+# -------------------------------- Removal of unnecessary files ---------------------
+
+
+def _resource_candidates(path: str) -> set[str]:
+    """Build comparable key variants for resource path matching."""
+    if not path:
+        return set()
+
+    cleaned = path.strip().replace("\\", "/")
+    cleaned = cleaned.split("#", 1)[0].split("?", 1)[0]
+    cleaned = cleaned.lstrip("./")
+
+    if not cleaned:
+        return set()
+
+    parts = []
+    for part in cleaned.split("/"):
+        if not part or part == ".":
+            continue
+        if part == ".." and parts and parts[-1] != "..":
+            parts.pop()
+            continue
+        parts.append(part)
+
+    normalized = "/".join(parts)
+    if normalized in {".", ""}:
+        return set()
+
+    candidates = {normalized, normalized.lstrip("/")}
+    basename = normalized.split("/")[-1]
+    if basename:
+        candidates.add(basename)
+
+    while normalized.startswith("../"):
+        normalized = normalized[3:]
+        if normalized:
+            candidates.add(normalized)
+
+    return {candidate for candidate in candidates if candidate}
+
+
+def remove_unnecessary_files(book: Book) -> Book:
+    """Remove unreferenced image and CSS files from the book.
+
+    Keeps resources that are referenced by at least one chapter via stylesheet
+    links or image tags. The cover image is always preserved if set.
+
+    Args:
+        book (Book): Book instance containing chapters, styles and images.
+
+    Returns:
+        Book: The same book instance with unreferenced assets removed.
+    """
+    used_styles = set()
+    used_images = set()
+
+    for chapter in book.chapters.values():
+        for style in chapter.styles:
+            used_styles.update(_resource_candidates(style))
+        for image in chapter.images:
+            used_images.update(_resource_candidates(image))
+
+    if book.cover:
+        used_images.update(_resource_candidates(book.cover))
+
+    book.styles = {
+        name: sheet
+        for name, sheet in book.styles.items()
+        if _resource_candidates(name) & used_styles
+    }
+    book.images = {
+        name: image
+        for name, image in book.images.items()
+        if _resource_candidates(name) & used_images
+    }
+
+    return book
+
+
 
 
 # ---------------------------------- CSS Cleaning Utilities -----------------
