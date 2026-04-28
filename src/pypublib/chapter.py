@@ -31,11 +31,11 @@ from typing import List
 import lxml.html as lhtml
 from lxml import etree
 
-import pypublib
+import logging
 
 # ---------------------------------------- Logger ------------------------------------------------
 
-LOGGER = pypublib.get_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------- Template for a Cover Page -----------------------------------
 

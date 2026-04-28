@@ -110,6 +110,7 @@ def _load_public_module(module_name: str):
 chapter = _load_public_module("chapter")
 book = _load_public_module("book")
 epub = _load_public_module("epub")
+edit = _load_public_module("edit")
 markdown = _load_public_module("markdown")
 
 from pypublib.book import Book
@@ -125,6 +126,7 @@ __all__ = [
     "init",
     "is_initialized",
     "epub",
+    "edit",
     "read_book",
     "publish_book",
     "chapter",

@@ -28,13 +28,13 @@ from os.path import splitext, basename
 from string import Template
 from typing import List, Dict
 
-import pypublib
+import logging
 from lxml import etree
 from pypublib.chapter import Chapter
 
 # ---------------------------------------- Logger ------------------------------------------------
 
-LOGGER = pypublib.get_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------- Template for Navigation (nav.xhtml) ------------------------------
 

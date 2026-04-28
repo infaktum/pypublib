@@ -24,7 +24,7 @@ classifiers = [
 keywords = ["epub", "epub3", "ebook", "markdown", "epub-generator"]
 
 [project.urls]
-Homepage = "https://github.com/infaktum/pypublib"
+Homepage = "https://infaktum.github.io/pypublib/README.html"
 Repository = "https://github.com/infaktum/pypublib"
 
 [tool.setuptools.packages.find]

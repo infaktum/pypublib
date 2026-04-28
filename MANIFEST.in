@@ -1,5 +1,6 @@
 include LICENSE
 include README.md
+include images/Cover.jpg
 include requirements.txt
 recursive-include examples *
 recursive-include docs *
