@@ -28,8 +28,9 @@ from os.path import splitext, basename
 from string import Template
 from typing import List, Dict
 
-from . import get_logger
 from lxml import etree
+
+from . import get_logger
 from .chapter import Chapter
 
 # ---------------------------------------- Logger ------------------------------------------------
