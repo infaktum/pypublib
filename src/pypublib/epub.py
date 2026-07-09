@@ -177,6 +177,7 @@ def extract_epub_content(file_path):
             metadata = opf.metadata
             cover = opf.cover
             guide = opf.guide
+            root_dir = opf_path[:-len("content.opf")]
         else:
             LOGGER.error("No OPF entry found in ebook!")
             raise ValueError()
@@ -185,18 +186,21 @@ def extract_epub_content(file_path):
         for item in spine:
             href = manifest[item]['href']
             if href.endswith('.xhtml') or href.endswith('.html'):
-                chapters[href] = epub.read(href).decode('utf-8')
+                try:
+                    chapters[href] = epub.read(f'{root_dir}{href}').decode('utf-8')
+                except Exception as e:
+                    print(e)
 
         for _, item in manifest.items():
             href, media_type = item['href'], item['media-type']
             if 'css' in media_type:  # Read stylesheets
-                styles[item['href']] = epub.read(href).decode('utf-8')
+                styles[item['href']] = epub.read(f'{root_dir}{href}').decode('utf-8')
 
             if 'image' in media_type:  # Read images
-                images[item['href']] = epub.read(href)
+                images[item['href']] = epub.read(f'{root_dir}{href}')
 
             if 'font' in media_type:  # Read fonts
-                fonts[href] = epub.read(href)
+                fonts[href] = epub.read(f'{root_dir}{href}')
 
     return {
         'metadata': metadata,
@@ -272,7 +276,7 @@ def save_book(book: Book, file_path):
 
         # Save chapters
         for href, chapter in book.chapters.items():
-            chapter_path = Path(os.path.join(oebps_dir, chapter.href).replace("?", ""))
+            chapter_path = Path(os.path.join(oebps_dir, href).replace("?", ""))
             chapter_path.parent.mkdir(parents=True, exist_ok=True)
             with open(chapter_path, "w", encoding="utf-8") as f:
                 f.write(chapter.html)

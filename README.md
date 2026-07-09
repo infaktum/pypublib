@@ -13,7 +13,7 @@ This project provides tools and utilities for generating and manipulating EPUB f
 It includes functions to create essential EPUB components such as `nav.xhtml`, `toc.ncx`, and the manifest, making it
 easier to build valid EPUB 2 and EPUB 3 ebooks programmatically.
 
-![Cover](https://raw.githubusercontent.com/infaktum/pypublib/main/images/Cover.jpg)
+![PyPubLib Banner](https://raw.githubusercontent.com/infaktum/pypublib/main/docs/banner.png)
 
 ## What is EPUB?
 
