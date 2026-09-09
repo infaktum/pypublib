@@ -745,7 +745,7 @@ class ArchiveState:
                     tree = parse_xml(data)
                     root = tree.getroot()
                     document_old_base, document_new_base = old_path, path
-                    base_element = root.find('.//x:head/x:html_base_url[@href]', NS)
+                    base_element = root.find('.//x:head/x:base[@href]', NS)
                     document_changed = False
                     if base_element is not None:
                         html_base_url = base_element.get('href')
