@@ -20,6 +20,8 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #
+#
+#
 
 import base64
 import mimetypes
@@ -54,6 +56,8 @@ class EpubReaderFrame(tk.Tk):
         self.html_frame = None
         self.raw_html = None
         self.preview_html = None
+        self.status = None
+
         self._build_menu()
         self.build_layout()
         self._bind_shortcuts()
@@ -75,7 +79,7 @@ class EpubReaderFrame(tk.Tk):
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
         menubar.add_cascade(label="Help", menu=help_menu)
-
+        self.toc_list = None
         self.status = None
         self.config(menu=menubar)
 
@@ -88,12 +92,13 @@ class EpubReaderFrame(tk.Tk):
         Aufbau:
 
             ┌───────────────────────────────────────────────────────┐
-            │ Toolbar                                                │
+            │ Toolbar                                               │
             ├──────────────┬──────────────────┬─────────────────────┤
-            │ Inhalts-     │ Editor HTML      │ Preview HTML        │
-            │ verzeichnis  │                  │                     │
+            │              │                  │                     │
+            │ TOC          │ Editor HTML      │ Preview HTML        │
+            │              │                  │                     │
             ├──────────────┴──────────────────┴─────────────────────┤
-            │ Statusleiste                                           │
+            │ Status bar                                            │
             └───────────────────────────────────────────────────────┘
         """
 
@@ -119,166 +124,57 @@ class EpubReaderFrame(tk.Tk):
         style.configure("PanelTitle.TLabel", background="#ffffff", foreground="#555555", font=("Segoe UI", 9, "bold"))
 
         # Haupttitel
-        style.configure(
-            "ChapterTitle.TLabel",
-            background="#ffffff",
-            foreground="#222222",
-            font=("Segoe UI", 13, "bold")
-        )
-
+        style.configure("ChapterTitle.TLabel", background="#ffffff", foreground="#222222", font=("Segoe UI", 13,
+                                                                                                 "bold"))
         # Status
-        style.configure(
-            "Status.TLabel",
-            background="#ddddda",
-            foreground="#444444",
-            font=("Segoe UI", 9)
-        )
+        style.configure("Status.TLabel", background="#ddddda", foreground="#444444", font=("Segoe UI", 9))
 
         # =========================================================
         # Toolbar
         # =========================================================
 
-        toolbar = ttk.Frame(
-            self,
-            style="App.TFrame",
-            padding=(10, 8)
-        )
-
-        toolbar.pack(
-            side=tk.TOP,
-            fill=tk.X
-        )
+        toolbar = ttk.Frame(self, style="App.TFrame", padding=(10, 8))
+        toolbar.pack(side=tk.TOP, fill=tk.X)
 
         # Titel links
-        ttk.Label(
-            toolbar,
-            text="EPUB Reader",
-            font=("Segoe UI Semibold", 12)
-        ).pack(
-            side=tk.LEFT,
-            padx=(0, 20)
-        )
-
+        ttk.Label(toolbar, text="EPUB Reader", font=("Segoe UI Semibold", 12)).pack(side=tk.LEFT, padx=(0, 20))
         # Öffnen
-        ttk.Button(
-            toolbar,
-            text="📖 Open",
-            command=self.open_epub
-        ).pack(
-            side=tk.LEFT
-        )
-
+        ttk.Button(toolbar, text="📖 Open", command=self.open_epub).pack(side=tk.LEFT)
         # Navigation
-        ttk.Button(
-            toolbar,
-            text="◀ Prev",
-            command=self.prev_chapter
-        ).pack(
-            side=tk.LEFT,
-            padx=(12, 3)
-        )
-
-        ttk.Button(
-            toolbar,
-            text="Next ▶",
-            command=self.next_chapter
-        ).pack(
-            side=tk.LEFT
-        )
+        ttk.Button(toolbar, text="◀ Prev", command=self.prev_chapter).pack(side=tk.LEFT, padx=(12, 3))
+        ttk.Button(toolbar, text="Next ▶", command=self.next_chapter).pack(side=tk.LEFT)
 
         # =========================================================
         # Hauptbereich
         # =========================================================
 
-        main = ttk.PanedWindow(
-            self,
-            orient=tk.HORIZONTAL
-        )
-
-        main.pack(
-            fill=tk.BOTH,
-            expand=True,
-            padx=8,
-            pady=(0, 8)
-        )
+        main = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         # =========================================================
         # Linkes Panel: Inhaltsverzeichnis
         # =========================================================
 
-        toc_frame = ttk.Frame(
-            main,
-            style="Panel.TFrame",
-            padding=10
-        )
-
-        main.add(
-            toc_frame,
-            weight=1
-        )
-
-        ttk.Label(
-            toc_frame,
-            text="TABLE OF CONTENTS",
-            style="PanelTitle.TLabel"
-        ).pack(
-            anchor="w",
-            pady=(0, 8)
-        )
+        toc_frame = ttk.Frame(main, style="Panel.TFrame", padding=10)
+        main.add(toc_frame, weight=1)
+        ttk.Label(toc_frame, text="TABLE OF CONTENTS", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 8))
 
         # Listbox + Scrollbar
-        toc_container = ttk.Frame(
-            toc_frame,
-            style="Panel.TFrame"
-        )
+        toc_container = ttk.Frame(toc_frame, style="Panel.TFrame")
+        toc_container.pack(fill=tk.BOTH, expand=True)
+        toc_scrollbar = ttk.Scrollbar(toc_container, orient=tk.VERTICAL)
+        toc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.toc_list = tk.Listbox(toc_container, font=("Segoe UI", 10), bg="#ffffff", fg="#333333",
+                                   selectbackground="#d9e2f3", selectforeground="#111111", relief=tk.FLAT, borderwidth=0,
+                                   highlightthickness=0,
+                                   activestyle="none",
+                                   exportselection=False
+                                   )
 
-        toc_container.pack(
-            fill=tk.BOTH,
-            expand=True
-        )
-
-        toc_scrollbar = ttk.Scrollbar(
-            toc_container,
-            orient=tk.VERTICAL
-        )
-
-        toc_scrollbar.pack(
-            side=tk.RIGHT,
-            fill=tk.Y
-        )
-
-        self.toc_list = tk.Listbox(
-            toc_container,
-            font=("Segoe UI", 10),
-            bg="#ffffff",
-            fg="#333333",
-            selectbackground="#d9e2f3",
-            selectforeground="#111111",
-            relief=tk.FLAT,
-            borderwidth=0,
-            highlightthickness=0,
-            activestyle="none",
-            exportselection=False
-        )
-
-        self.toc_list.pack(
-            side=tk.LEFT,
-            fill=tk.BOTH,
-            expand=True
-        )
-
-        toc_scrollbar.configure(
-            command=self.toc_list.yview
-        )
-
-        self.toc_list.configure(
-            yscrollcommand=toc_scrollbar.set
-        )
-
-        self.toc_list.bind(
-            "<<ListboxSelect>>",
-            self.on_toc_select
-        )
+        self.toc_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        toc_scrollbar.configure(command=self.toc_list.yview)
+        self.toc_list.configure(yscrollcommand=toc_scrollbar.set)
+        self.toc_list.bind("<<ListboxSelect>>", self.on_toc_select)
 
         # ------------------------- Raw HTML + gerendertes HTML -------------------------
 
@@ -293,130 +189,41 @@ class EpubReaderFrame(tk.Tk):
         # =========================================================
 
         raw_frame = ttk.Frame(panes, style="Panel.TFrame", padding=10)
-
         panes.add(raw_frame, weight=1)
+        ttk.Label(raw_frame, text="Editor", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        raw_container = ttk.Frame(raw_frame, style="Panel.TFrame")
+        raw_container.pack(fill=tk.BOTH, expand=True)
+        raw_y_scroll = ttk.Scrollbar(raw_container, orient=tk.VERTICAL)
+        raw_y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        raw_x_scroll = ttk.Scrollbar(raw_container, orient=tk.HORIZONTAL)
 
-        ttk.Label(
-            raw_frame,
-            text="Editor",
-            style="PanelTitle.TLabel"
-        ).pack(
-            anchor="w",
-            pady=(0, 8)
-        )
+        raw_x_scroll.pack(side=tk.BOTTOM, fill=tk.X)
 
-        raw_container = ttk.Frame(
-            raw_frame,
-            style="Panel.TFrame"
-        )
+        self.raw_html = tk.Text(raw_container, wrap=tk.NONE, font=("Consolas", 10), bg="#fafafa", fg="#303030",
+                                insertbackground="#303030", relief=tk.FLAT, borderwidth=0, highlightthickness=0, padx=8, pady=8)
 
-        raw_container.pack(
-            fill=tk.BOTH,
-            expand=True
-        )
-
-        raw_y_scroll = ttk.Scrollbar(
-            raw_container,
-            orient=tk.VERTICAL
-        )
-
-        raw_y_scroll.pack(
-            side=tk.RIGHT,
-            fill=tk.Y
-        )
-
-        raw_x_scroll = ttk.Scrollbar(
-            raw_container,
-            orient=tk.HORIZONTAL
-        )
-
-        raw_x_scroll.pack(
-            side=tk.BOTTOM,
-            fill=tk.X
-        )
-
-        self.raw_html = tk.Text(
-            raw_container,
-            wrap=tk.NONE,
-            font=("Consolas", 10),
-            bg="#fafafa",
-            fg="#303030",
-            insertbackground="#303030",
-            relief=tk.FLAT,
-            borderwidth=0,
-            highlightthickness=0,
-            padx=8,
-            pady=8
-        )
-
-        self.raw_html.pack(
-            side=tk.LEFT,
-            fill=tk.BOTH,
-            expand=True
-        )
-
-        self.raw_html.configure(
-            yscrollcommand=raw_y_scroll.set,
-            xscrollcommand=raw_x_scroll.set
-        )
-
-        raw_y_scroll.configure(
-            command=self.raw_html.yview
-        )
-
-        raw_x_scroll.configure(
-            command=self.raw_html.xview
-        )
-
-        self.raw_html.insert(
-            "1.0",
-            "Open an EPUB file to start reading."
-        )
-
-        self.raw_html.configure(
-            state=tk.DISABLED
-        )
+        self.raw_html.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.raw_html.configure(yscrollcommand=raw_y_scroll.set, xscrollcommand=raw_x_scroll.set)
+        raw_y_scroll.configure(command=self.raw_html.yview)
+        raw_x_scroll.configure(command=self.raw_html.xview)
+        self.raw_html.insert("1.0", "Open an EPUB file to start reading.")
+        self.raw_html.configure(state=tk.DISABLED)
 
         # =========================================================
         # Rechtes Panel: gerendertes HTML
         # =========================================================
 
-        html_frame = ttk.Frame(
-            panes,
-            style="Panel.TFrame",
-            padding=10
-        )
-
-        panes.add(
-            html_frame,
-            weight=1
-        )
-
-        ttk.Label(
-            html_frame,
-            text="RENDERED HTML",
-            style="PanelTitle.TLabel"
-        ).pack(
-            anchor="w",
-            pady=(0, 8)
-        )
+        html_frame = ttk.Frame(panes, style="Panel.TFrame", padding=10)
+        panes.add(html_frame, weight=1)
+        ttk.Label(html_frame, text="RENDERED HTML", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 8))
         self.preview_html = HtmlFrame(html_frame, messages_enabled=False)
         self.preview_html.pack(fill=tk.BOTH, expand=True)
 
         # ------------------------------ Status bar -----------------------------
 
-        self.status = ttk.Label(
-            self,
-            text="Ready",
-            style="Status.TLabel",
-            anchor="w",
-            padding=(10, 5)
-        )
+        self.status = ttk.Label(self, text="Ready", style="Status.TLabel", anchor="w", padding=(10, 5))
 
-        self.status.pack(
-            side=tk.BOTTOM,
-            fill=tk.X
-        )
+        self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
     def _build_layout(self):
         # Toolbar frame
@@ -539,7 +346,8 @@ class EpubReaderFrame(tk.Tk):
 
         return html
 
-    def embed_svg_images(self, html):
+    @staticmethod
+    def embed_svg_images(html):
         """
         Ersetzt SVG-Konstrukte der Form
 
@@ -582,10 +390,9 @@ class EpubReaderFrame(tk.Tk):
 
             try:
 
-
                 # Data-URL erzeugen
                 data_url = self.image_to_data_url(   data)
-                
+
 
                 # Breite/Höhe des SVG bzw. image übernehmen
                 width = image.get("width")
