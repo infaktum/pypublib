@@ -147,7 +147,7 @@ class TestBookAdvanced(unittest.TestCase):
             any(item.get("properties") == "cover-image" for item in manifest if item["href"] == "cover.jpg"))
         self.assertIn("<dc:title>Titel</dc:title>", opf)
         self.assertIn("<dc:subject>fantasy</dc:subject>", opf)
-        self.assertIn('name = "calibre:series"', opf)
+        self.assertIn('name="calibre:series"', opf)
         self.assertIn("<guide>", opf)
         self.assertIn("Book(title = Titel", repr(book))
 

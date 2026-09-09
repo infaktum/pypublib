@@ -26,10 +26,13 @@ import zipfile
 from pathlib import Path
 from typing import Dict
 
+from lxml import etree
+
 from . import get_logger
 from .book import Book
 from .book import Opf
 from .chapter import Chapter
+from ._archive import ArchiveState, archive_path
 
 # ---------------------------------------- Logger ------------------------------------------------
 
@@ -119,10 +122,15 @@ def create_book(contents):
     Returns:
         Book: A new Book instance populated with the extracted content.
     """
-    book = Book(contents["metadata"])
+    book = Book(dict(contents["metadata"]))
     for href, chapter in contents['chapters'].items():
-        os.path.basename(href)
-        chapter = Chapter.from_xhtml(href, chapter)
+        try:
+            chapter = Chapter.from_xhtml(href, chapter)
+        except (etree.XMLSyntaxError, ValueError) as exc:
+            if not contents.get('archive_records'):
+                raise
+            LOGGER.warning('Cannot parse chapter %s; original archive entry is retained: %s', href, exc)
+            continue
         book.chapters[chapter.href] = chapter
 
     book.styles = contents['styles']
@@ -134,6 +142,9 @@ def create_book(contents):
     if contents['cover']:
         book.cover = contents['cover']
 
+    if contents.get('archive_records'):
+        book._archive = ArchiveState(book, contents)
+
     return book
 
 
@@ -143,6 +154,8 @@ def extract_epub_content(file_path):
 
     Reads all chapters, stylesheets, images, fonts, and metadata from the EPUB archive.
     Parses the OPF file to extract manifest, spine, and guide information.
+    Uses the package path from META-INF/container.xml, falling back to a file
+    named content.opf if no referenced package can be found.
 
     Args:
         file_path (str): Path to the EPUB file.
@@ -158,6 +171,9 @@ def extract_epub_content(file_path):
             - 'spine': Reading order list
             - 'guide': Guide references
             - 'cover': Cover image filename or None
+            - 'opf_path': Original package path inside the archive
+            - 'archive_records': Ordered (ZipInfo, bytes) pairs for all ZIP entries
+            - 'archive_comment': Original ZIP archive comment
     """
     chapters, styles, images, fonts, metadata = {}, {}, {}, {}, {}
     manifest: Dict[str, Dict[str, str]] = {}
@@ -165,42 +181,78 @@ def extract_epub_content(file_path):
     cover, guide = None, []
 
     with zipfile.ZipFile(file_path, 'r') as epub:
-        # Find OPF file path
-        opf_path = next((name for name in epub.namelist() if name.endswith('content.opf')), None)
+        names = epub.namelist()
+        opf_path = None
+        if 'META-INF/container.xml' in names:
+            try:
+                container = etree.fromstring(
+                    epub.read('META-INF/container.xml'),
+                    parser=etree.XMLParser(resolve_entities=False, no_network=True),
+                )
+                namespace = {'c': 'urn:oasis:names:tc:opendocument:xmlns:container'}
+                for rootfile in container.findall('c:rootfiles/c:rootfile', namespace):
+                    candidate = rootfile.get('full-path')
+                    if candidate and candidate in names and not candidate.endswith('/'):
+                        opf_path = candidate
+                        break
+            except etree.XMLSyntaxError as exc:
+                LOGGER.warning('Invalid META-INF/container.xml; trying content.opf: %s', exc)
+
+        if opf_path is None:
+            opf_path = next((name for name in names if name.rsplit('/', 1)[-1] == 'content.opf'), None)
 
         # Parse OPF file if present
         if opf_path:
-            xml_str = epub.read(opf_path).decode('utf-8').encode("utf-8")
+            xml_str = epub.read(opf_path)
             opf = Opf(xml_str)
             manifest = opf.manifest
             spine = opf.spine
             metadata = opf.metadata
             cover = opf.cover
             guide = opf.guide
-            root_dir = opf_path[:-len("content.opf")]
         else:
-            LOGGER.error("No OPF entry found in ebook!")
-            raise ValueError()
+            message = ('No OPF package found: META-INF/container.xml does not reference '
+                       'an existing package, and no fallback content.opf exists in the EPUB.')
+            LOGGER.error(message)
+            raise ValueError(message)
 
-        # Read chapters as listed in the spine, cross-referenced with the manifest, to keep sorting order
-        for item in spine:
-            href = manifest[item]['href']
-            if href.endswith('.xhtml') or href.endswith('.html'):
+        # Retain every ZIP record, including unknown resources and META-INF data.
+        archive_records = [(info, epub.read(info)) for info in epub.infolist()]
+        archive_comment = epub.comment
+
+        # Reading-order chapters first, followed by non-spine XHTML documents.
+        # Standalone navigation remains in archive_entries rather than the reader list.
+        ordered_ids = list(dict.fromkeys([*spine, *manifest]))
+        for identifier in ordered_ids:
+            item = manifest[identifier]
+            href = item['href']
+            path = archive_path(opf_path, href)
+            if path is None:
+                continue
+            if item['media-type'] == 'application/xhtml+xml' or href.endswith(('.xhtml', '.html')):
+                if identifier not in spine and 'nav' in item.get('properties', '').split():
+                    continue
                 try:
-                    chapters[href] = epub.read(f'{root_dir}{href}').decode('utf-8')
-                except Exception as e:
-                    print(e)
+                    chapters[href] = epub.read(path).decode('utf-8')
+                except (KeyError, UnicodeDecodeError) as exc:
+                    LOGGER.warning('Cannot load chapter %s; original archive entry is retained: %s', href, exc)
 
         for _, item in manifest.items():
             href, media_type = item['href'], item['media-type']
+            path = archive_path(opf_path, href)
+            if path is None:
+                continue
             if 'css' in media_type:  # Read stylesheets
-                styles[item['href']] = epub.read(f'{root_dir}{href}').decode('utf-8')
+                try:
+                    styles[item['href']] = epub.read(path).decode('utf-8')
+                except UnicodeDecodeError:
+                    LOGGER.warning('Cannot decode stylesheet %s as UTF-8; original archive entry is retained', href)
 
             if 'image' in media_type:  # Read images
-                images[item['href']] = epub.read(f'{root_dir}{href}')
+                images[item['href']] = epub.read(path)
 
             if 'font' in media_type:  # Read fonts
-                fonts[href] = epub.read(f'{root_dir}{href}')
+                fonts[href] = epub.read(path)
 
     return {
         'metadata': metadata,
@@ -211,7 +263,10 @@ def extract_epub_content(file_path):
         'manifest': manifest,
         'spine': spine,
         'guide': guide,
-        'cover': cover
+        'cover': cover,
+        'opf_path': opf_path,
+        'archive_records': archive_records,
+        'archive_comment': archive_comment,
     }
 
 
@@ -257,7 +312,15 @@ def save_book(book: Book, file_path):
 
     Note:
         The mimetype file is stored uncompressed as per EPUB specification.
+        Imported books instead preserve their original archive structure and
+        patch only edited resources, OPF fields, and navigation references.
+        Their output is written to a temporary file before atomic replacement.
     """
+    if book._archive is not None:
+        book._archive.save(book, file_path)
+        LOGGER.info('Book has been saved with original archive structure as %s', file_path)
+        return
+
     with tempfile.TemporaryDirectory() as tmpdir:
         # Write mimetype file (must be first and uncompressed)
         mimetype_path = os.path.join(tmpdir, "mimetype")
@@ -431,7 +494,9 @@ def validate_book_resources(book):
     """
     Validate that all resources referenced in chapters are available in the book.
 
-    Checks for missing images and stylesheets referenced by chapters.
+    Checks for missing images and stylesheets referenced by chapters. Resolves
+    references relative to each chapter before comparing archive paths and
+    ignores external/data URLs. Original raw entries also count as available.
 
     Args:
         book (Book): The Book instance to validate.
@@ -443,15 +508,23 @@ def validate_book_resources(book):
             - 'missing_styles': List of missing stylesheet filenames
     """
     missing = []
-    book_images = set(book.images.keys())
-    book_styles = set(book.styles.keys())
 
     for chapter in book.chapters.values():
         chapter_images = set(chapter.images)
         chapter_styles = set(chapter.styles)
 
-        missing_images = chapter_images - book_images
-        missing_styles = chapter_styles - book_styles
+        missing_images = {
+            href for href in chapter_images
+            if book.resolve_resource(href, chapter.href) is not None
+            and book.resource_key(book.images, href, chapter.href) is None
+            and book.resolve_resource(href, chapter.href) not in book.archive_entries
+        }
+        missing_styles = {
+            href for href in chapter_styles
+            if book.resolve_resource(href, chapter.href) is not None
+            and book.resource_key(book.styles, href, chapter.href) is None
+            and book.resolve_resource(href, chapter.href) not in book.archive_entries
+        }
 
         if missing_images or missing_styles:
             missing.append({"chapter": chapter.title, "missing_images": list(missing_images),

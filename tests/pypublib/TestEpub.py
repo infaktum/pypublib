@@ -230,10 +230,10 @@ class TestEpub(unittest.TestCase):
         def read_side_effect(name):
             payload = {
                 "OEBPS/content.opf": b"<package/>",
-                "chapter1.xhtml": MINIMAL_XHTML.encode("utf-8"),
-                "styles/main.css": b"body { color: black; }",
-                "images/pic.png": b"png-data",
-                "fonts/main.woff": b"font-data",
+                "OEBPS/chapter1.xhtml": MINIMAL_XHTML.encode("utf-8"),
+                "OEBPS/styles/main.css": b"body { color: black; }",
+                "OEBPS/images/pic.png": b"png-data",
+                "OEBPS/fonts/main.woff": b"font-data",
             }
             return payload[name]
 

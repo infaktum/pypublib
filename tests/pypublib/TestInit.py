@@ -7,6 +7,31 @@ import pypublib
 
 class TestPackageInit(unittest.TestCase):
     def setUp(self):
+        # Reloading a module does not reset logging's process-wide logger registry.
+        logger = logging.getLogger('pypublib')
+        original_handlers = list(logger.handlers)
+        original_level = logger.level
+        original_propagate = logger.propagate
+        original_initialized = pypublib._initialized
+        original_config = pypublib._config.copy()
+
+        def restore_logging():
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                if handler not in original_handlers:
+                    handler.close()
+            for handler in original_handlers:
+                logger.addHandler(handler)
+            logger.setLevel(original_level)
+            logger.propagate = original_propagate
+            pypublib._initialized = original_initialized
+            pypublib._config = original_config
+
+        self.addCleanup(restore_logging)
+        for original_handler in original_handlers:
+            logger.removeHandler(original_handler)
+        logger.setLevel(logging.NOTSET)
+        logger.propagate = True
         self.pkg = importlib.reload(pypublib)
 
     def test_package_exports_are_available(self):

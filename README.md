@@ -69,6 +69,80 @@ Key features include:
 - Support for adding metadata to the EPUB file.
 - Easy integration with existing Python projects.
 
+## Editing existing EPUBs
+
+Books loaded with `read_book()` retain every original archive entry, including
+unknown resources, complete OPF metadata and attributes, and authored navigation.
+Saving an unchanged book preserves each entry's contents byte for byte. The ZIP
+archive itself is rewritten; its original entry order, compression methods,
+timestamps, and comments are retained.
+
+```python
+from pypublib import read_book, publish_book
+
+book = read_book("original.epub")
+if book is None:
+    raise ValueError("Could not read the EPUB")
+
+chapter = next(iter(book.chapters.values()))
+chapter.content = chapter.content.replace("old text", "new text")
+book.title = "Updated title"
+publish_book(book, "edited.epub")
+```
+
+Chapter edits retain the surrounding XHTML, including head elements, namespaces,
+body attributes, and embedded styles. Changing an imported chapter's title keeps
+its filename. Metadata changes update the corresponding existing XML elements;
+repeated authors and metadata refinements remain present. Adding or removing
+chapters updates the manifest, spine, and existing table of contents without
+replacing its authored hierarchy. Existing navigation labels are preserved when
+chapter titles change. Imported books are saved through a temporary file followed
+by atomic replacement, so the original survives a failed save.
+
+For edits beyond the convenience properties, imported books expose:
+
+- `book.archive_entries`: a dictionary of archive paths to file contents as bytes,
+  including navigation documents and resources not represented by typed fields.
+- `book.package_document`: the full OPF as an `lxml.etree.ElementTree`, including
+  repeated metadata elements, namespaces, extension elements, and attributes.
+- `book.spine`: the original reading-order IDs. Non-spine XHTML documents are
+  available in `book.chapters` without automatically becoming spine entries.
+
+Use `package_document` for precise OPF edits and `archive_entries` for raw file or
+navigation edits. Explicit changes through chapter/resource properties take
+precedence over raw entry changes to the same file. The `metadata` dictionary
+remains a convenience view: for repeated fields other than subjects, it exposes
+the last value; use `package_document` to edit a particular author or refinement.
+Resources that cannot be decoded or parsed remain available as original bytes.
+New `Book` instances continue to generate their EPUB structure when saved.
+
+Resource references are resolved relative to the referring document. For example,
+`book.get_resource("../Images/cover.png", "Text/chapter.xhtml")` returns the image
+registered as `Images/cover.png`. The reader, resource validation, and resource
+cleanup use this same resolution, including percent escapes, queries, and fragments.
+Matching never falls back to filenames from unrelated directories.
+
+Saving rejects colliding resource paths (including differently spelled URLs that
+resolve to the same ZIP entry), paths outside the archive, and attempts to overwrite
+unrelated original entries. Edited OPF documents must have unique manifest IDs and
+local resource paths, existing local targets, and valid spine references. Conflicting
+model and manifest/spine edits raise `ValueError` before replacing the destination.
+If you remove a manifest item directly through `package_document`, also remove its
+spine references; an unchanged chapter model no longer recreates the deleted item.
+
+Metadata keys distinguish XML namespaces: `title` refers to Dublin Core, while
+extension fields use expanded names such as `{urn:custom}title`. An OPF `meta`
+element named `title` uses `{http://www.idpf.org/2007/opf}meta/title`, so editing
+the book title cannot accidentally overwrite that separate metadata field.
+
+When an imported chapter's `href` changes, saving updates links from XML-based
+documents and CSS to that chapter. Moving it into a different directory also
+rebases its image, stylesheet, script, and inline CSS references. Generated links
+encode special filename characters and preserve queries and fragments. XML
+`xml:base` and XHTML `<base>` declarations are taken into account. Unchanged
+documents retain their original bytes; if a document cannot be parsed safely
+during this update, saving fails before replacing the destination.
+
 ## The API
 
 The library provides a simple API for creating and manipulating EPUB files.
@@ -131,4 +205,4 @@ EPUB files.
 pypublib needs only lxml for parsing and generating XML/HTML files. It supports Python 3.10 and higher.
 
 - Python 3.10 or higher
-- lxml 6.0.4 or higher 
+- lxml 6.0.4 or higher

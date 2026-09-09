@@ -302,10 +302,7 @@ class EpubReaderFrame(tk.Tk):
 
         self.book = read_book(path)
 
-        self.chapters = [
-            (chapter.title, chapter.html)
-            for chapter in list(self.book.chapters.values())
-        ]
+        self.chapters = list(self.book.chapters.values())
 
         self.current_chapter_index = 0
         self._refresh_toc()
@@ -313,8 +310,8 @@ class EpubReaderFrame(tk.Tk):
 
     def _refresh_toc(self):
         self.toc_list.delete(0, tk.END)
-        for title, _ in self.chapters:
-            self.toc_list.insert(tk.END, title)
+        for chapter in self.chapters:
+            self.toc_list.insert(tk.END, chapter.title)
         if self.chapters:
             self.toc_list.selection_set(self.current_chapter_index)
 
@@ -322,14 +319,15 @@ class EpubReaderFrame(tk.Tk):
         if not self.chapters or not (0 <= index < len(self.chapters)):
             return
 
-        title, content = self.chapters[index]
+        chapter = self.chapters[index]
+        title, content = chapter.title, chapter.html
 
         self.raw_html.config(state=tk.NORMAL)
         self.raw_html.delete("1.0", tk.END)
         self.raw_html.insert("1.0", content)
         # self.raw_html.config(state=tk.DISABLED)
 
-        self.preview_html.load_html(self.prepare_chapter(content))
+        self.preview_html.load_html(self.prepare_chapter(content, chapter.href))
 
         self.current_chapter_index = index
         self.toc_list.selection_clear(0, tk.END)
@@ -338,11 +336,11 @@ class EpubReaderFrame(tk.Tk):
 
         self.status.config(text=f"{title} ({index + 1}/{len(self.chapters)})")
 
-    def prepare_chapter(self, content):
+    def prepare_chapter(self, content, chapter_href=None):
 
-        html = self.embed_images(content)
+        html = self.embed_images(content, chapter_href)
         html = self.embed_svg_images(html)
-        html = self.embed_stylesheets(html)
+        html = self.embed_stylesheets(html, chapter_href)
 
         return html
 
@@ -431,7 +429,7 @@ class EpubReaderFrame(tk.Tk):
             """
         return str(soup)
 
-    def embed_images(self, html):
+    def embed_images(self, html, chapter_href=None):
         """
         Ersetzt EPUB-interne <img>-Referenzen durch Data-URLs.
         """
@@ -441,11 +439,11 @@ class EpubReaderFrame(tk.Tk):
         for img in soup.find_all("img"):
             src = img.get("src")
 
-            if not src:
+            if not src or self.book.resolve_resource(src, chapter_href) is None:
                 continue
             try:
-                data = self.book.images[src]
-                data_url = self.image_to_data_url(data, src)
+                data = self.book.get_resource(src, chapter_href)
+                data_url = self.image_to_data_url(data, self.book.resolve_resource(src, chapter_href))
 
                 img["src"] = data_url
 
@@ -468,7 +466,7 @@ class EpubReaderFrame(tk.Tk):
 
         return f"data:{mime_type};base64,{encoded}"
 
-    def embed_stylesheets(self, html):
+    def embed_stylesheets(self, html, chapter_href=None):
         """
         Ersetzt <link rel="stylesheet" ...> durch <style>...</style>.
 
@@ -485,11 +483,11 @@ class EpubReaderFrame(tk.Tk):
         for link in soup.find_all("link", rel="stylesheet"):
 
             href = link.get("href")
-            if not href:
+            if not href or self.book.resolve_resource(href, chapter_href) is None:
                 continue
 
             try:
-                css = self.book.styles[href]
+                css = self.book.get_resource(href, chapter_href).decode('utf-8')
 
                 style = soup.new_tag("style")
                 style.string = css

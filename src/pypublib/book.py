@@ -25,81 +25,26 @@ from __future__ import annotations
 
 import uuid
 from os.path import splitext, basename
-from string import Template
 from typing import List, Dict
 
 from lxml import etree
 
 from . import get_logger
 from .chapter import Chapter
+from ._archive import archive_path, metadata_key
 
 # ---------------------------------------- Logger ------------------------------------------------
 
 LOGGER = get_logger(__name__)
 
-# ---------------------------- Template for Navigation (nav.xhtml) ------------------------------
+# XML namespaces used when building EPUB documents.
+XHTML_NS = "http://www.w3.org/1999/xhtml"
+EPUB_NS = "http://www.idpf.org/2007/ops"
+NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
+OPF_NS = "http://www.idpf.org/2007/opf"
+DC_NS = "http://purl.org/dc/elements/1.1/"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
 
-TEMPLATE_NAV = f'''<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epublib="http://www.idpf.org/2007/ops" lang="de-DE" xml:lang="de-DE">
-<head>
-  <title>$title</title>
-  <meta charset="utf-8" />
-  <link href="sgc-nav.css" rel="stylesheet" type="text/css"/></head>
-<body epublib:type="frontmatter">
-  <nav epublib:type="toc" id="toc" role="doc-toc">
-    <h1>$title</h1>
-    <ol>
-      $nav_items
-    </ol>
-  </nav>
-  <nav epublib:type="landmarks" id="landmarks" hidden="">
-    <h2>Orientierungsmarken</h2>
-    <ol>
-      <li>
-        <a epublib:type="toc" href="#toc">Inhaltsverzeichnis</a>
-      </li>
-    </ol>
-  </nav>
-</body>
-</html>
-'''
-
-# ----------------------------- Template for TOC NCX -----------------------------------
-
-TEMPLATE_TOC = f'''<?xml version="1.0" encoding="UTF-8"?>
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
-  <head>
-    <meta name="dtb:uid" content="$book_id"/>
-    <meta name="dtb:depth" content="1"/>
-    <meta name="dtb:totalPageCount" content="0"/>
-    <meta name="dtb:maxPageNumber" content="0"/>
-  </head>
-  <docTitle>
-    <text>$title</text>
-  </docTitle>
-  <navMap>
-    $nav_points
-  </navMap>
-</ncx>'''
-
-# -----------------------------  Template for EPUB OPF  -----------------------------
-
-TEMPLATE_OPF = """<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
-  <metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:calibre="http://calibre.kovidgoyal.net/2009/metadata">
-    $metadata_items
-  </metadata>
-  <manifest>
-    $manifest_items
-  </manifest>
-  <spine toc="toc.ncx"> 
-    $spine_items
-  </spine>
-    $guide
-</package>"""
-
-# ------------------------------------- Constants ---------------------------------------------
 
 DC_METADATA = ['title', 'creator', 'description', 'date', 'language', 'publisher', 'identifier']
 CALIBRE_METADATA = ['series', 'series_index']
@@ -136,6 +81,9 @@ class Book:
         fonts (dict): Mapping of filename to binary font data.
         guide (list): List of guide reference items.
         cover (str): Filename of the cover image.
+        archive_entries (dict[str, bytes]): Original archive files for imported books.
+        package_document (etree._ElementTree | None): Complete editable imported OPF.
+        spine (list[str]): Imported reading-order manifest IDs.
     """
 
     def __init__(self, metadata: Dict | None = None) -> None:
@@ -155,6 +103,10 @@ class Book:
         self.fonts = {}
         self.guide = []
         self.cover = None
+        self.spine = []
+        self.archive_entries = {}
+        self.package_document = None
+        self._archive = None
         if not self.identifier:
             self.identifier = "pypublib:" + str(uuid.uuid4())
         self.add_metadata("generator", "pypublib 0.1.0")
@@ -167,6 +119,10 @@ class Book:
             contents (dict): Dictionary with book components. Should have keys:
                 'metadata', 'chapters', 'styles', 'images', 'fonts', 'guide', 'cover'.
         """
+        if contents.get("archive_records"):
+            from .epub import create_book
+            self.__dict__.update(create_book(contents).__dict__)
+            return
         self.metadata = contents.get("metadata", {})
         for chapter in contents.get("chapters", []):
             self.add_chapter(chapter)
@@ -235,6 +191,71 @@ class Book:
             del self.chapters[href]
 
     # ---------------------------- Stylesheet Management ----------------------------------
+
+    def resolve_resource(self, href: str, base_href: str | None = None) -> str | None:
+        """
+        Resolve a resource reference to its normalized archive path.
+
+        Args:
+            href (str): Resource URL, possibly containing percent escapes, a
+                query string, or a fragment.
+            base_href (str | None): OPF-relative href of the referring chapter
+                or stylesheet. If omitted, href is relative to the OPF itself.
+
+        Returns:
+            str | None: Archive path, or None for an external or data URL.
+
+        Example:
+            >>> Book().resolve_resource('../Images/cover.png', 'Text/one.xhtml')
+            'OEBPS/Images/cover.png'
+        """
+        package_path = self._archive.path if self._archive is not None else 'OEBPS/content.opf'
+        base = archive_path(package_path, base_href) if base_href is not None else package_path
+        return archive_path(base, href) if base is not None else None
+
+    def resource_key(self, resources: Dict, href: str, base_href: str | None = None) -> str | None:
+        """
+        Find a resource-map key by comparing fully resolved paths.
+
+        Args:
+            resources (dict): Resource mapping whose keys are OPF-relative hrefs.
+            href (str): Reference to locate in the mapping.
+            base_href (str | None): OPF-relative referring document, if applicable.
+
+        Returns:
+            str | None: Original mapping key, or None if no local match exists.
+            Matching is case-sensitive and never falls back to the basename.
+        """
+        target = self.resolve_resource(href, base_href)
+        if target is None:
+            return None
+        return next((key for key in resources if self.resolve_resource(key) == target), None)
+
+    def get_resource(self, href: str, base_href: str | None = None) -> bytes:
+        """
+        Read a local resource through its resolved reference.
+
+        Args:
+            href (str): Resource URL to read.
+            base_href (str | None): OPF-relative referring chapter or stylesheet.
+
+        Returns:
+            bytes: Resource contents. Editable text resources are UTF-8 encoded.
+                Resources unavailable in typed maps use the original archive bytes.
+
+        Raises:
+            KeyError: If the resource is missing or refers to an external URL.
+        """
+        for group in ('styles', 'images', 'fonts', 'chapters'):
+            resources = getattr(self, group)
+            key = self.resource_key(resources, href, base_href)
+            if key is not None:
+                value = resources[key].html if group == 'chapters' else resources[key]
+                return value.encode('utf-8') if isinstance(value, str) else bytes(value)
+        path = self.resolve_resource(href, base_href)
+        if path is not None and path in self.archive_entries:
+            return self.archive_entries[path]
+        raise KeyError(href)
 
     def add_style(self, name: str, sheet: str) -> None:
         """
@@ -630,14 +651,40 @@ class Book:
         Returns:
             str: XHTML content for nav.xhtml file.
         """
+        if self._archive is not None:
+            for href, kind in self._archive.navigation.items():
+                if kind == "nav":
+                    return self._archive.navigation_bytes(self, href).decode("utf-8")
         title = "Inhaltsverzeichnis" if self.language == "de" else "Table of Contents"
 
-        nav_items = "\n".join(
-            f'<li><a href="{chapter.href}">{chapter.title}</a></li>'
-            for _, chapter in self.chapters.items()
-        )
-        nav = Template(TEMPLATE_NAV).substitute(title=title, nav_items=nav_items)
-        return nav
+        root = etree.Element(etree.QName(XHTML_NS, "html"),
+                             nsmap={None: XHTML_NS, "epublib": EPUB_NS})
+        root.set("lang", "de-DE")
+        root.set(etree.QName(XML_NS, "lang"), "de-DE")
+        head = etree.SubElement(root, etree.QName(XHTML_NS, "head"))
+        etree.SubElement(head, etree.QName(XHTML_NS, "title")).text = title
+        etree.SubElement(head, etree.QName(XHTML_NS, "meta"), charset="utf-8")
+        etree.SubElement(head, etree.QName(XHTML_NS, "link"),
+                         href="sgc-nav.css", rel="stylesheet", type="text/css")
+        body = etree.SubElement(root, etree.QName(XHTML_NS, "body"))
+        body.set(etree.QName(EPUB_NS, "type"), "frontmatter")
+        nav = etree.SubElement(body, etree.QName(XHTML_NS, "nav"), id="toc", role="doc-toc")
+        nav.set(etree.QName(EPUB_NS, "type"), "toc")
+        etree.SubElement(nav, etree.QName(XHTML_NS, "h1")).text = title
+        items = etree.SubElement(nav, etree.QName(XHTML_NS, "ol"))
+        for chapter in self.chapters.values():
+            item = etree.SubElement(items, etree.QName(XHTML_NS, "li"))
+            etree.SubElement(item, etree.QName(XHTML_NS, "a"), href=chapter.href).text = chapter.title
+        landmarks = etree.SubElement(body, etree.QName(XHTML_NS, "nav"), id="landmarks", hidden="")
+        landmarks.set(etree.QName(EPUB_NS, "type"), "landmarks")
+        etree.SubElement(landmarks, etree.QName(XHTML_NS, "h2")).text = "Orientierungsmarken"
+        items = etree.SubElement(landmarks, etree.QName(XHTML_NS, "ol"))
+        item = etree.SubElement(items, etree.QName(XHTML_NS, "li"))
+        link = etree.SubElement(item, etree.QName(XHTML_NS, "a"), href="#toc")
+        link.set(etree.QName(EPUB_NS, "type"), "toc")
+        link.text = "Inhaltsverzeichnis"
+        return etree.tostring(root, encoding="utf-8", xml_declaration=True,
+                              doctype="<!DOCTYPE html>", pretty_print=True).decode("utf-8")
 
     @property
     def toc(self) -> str:
@@ -662,22 +709,29 @@ class Book:
         Returns:
             str: NCX XML content.
         """
+        if self._archive is not None:
+            for href, kind in self._archive.navigation.items():
+                if kind == "ncx":
+                    return self._archive.navigation_bytes(self, href).decode("utf-8")
         title = "Inhaltsverzeichnis" if self.language == "de" else "Table of Contents"
 
-        nav_points = ""
-        for i, (_, chapter) in enumerate(self.chapters.items(), 1):
-            nav_points += f"""
-        <navPoint id="navPoint-{i}" playOrder="{i}">
-        <navLabel>
-          <text>{chapter.title}</text>
-        </navLabel>
-        <content src="{chapter.href}"/>
-        </navPoint>"""
-
-        toc = Template(TEMPLATE_TOC).substitute(book_id=getattr(self, "uid", "bookid"), title=title,
-                                                nav_points=nav_points)
-
-        return toc
+        root = etree.Element(etree.QName(NCX_NS, "ncx"), nsmap={None: NCX_NS}, version="2005-1")
+        head = etree.SubElement(root, etree.QName(NCX_NS, "head"))
+        for name, value in (("dtb:uid", getattr(self, "uid", "bookid")),
+                            ("dtb:depth", "1"), ("dtb:totalPageCount", "0"),
+                            ("dtb:maxPageNumber", "0")):
+            etree.SubElement(head, etree.QName(NCX_NS, "meta"), name=name, content=str(value))
+        doc_title = etree.SubElement(root, etree.QName(NCX_NS, "docTitle"))
+        etree.SubElement(doc_title, etree.QName(NCX_NS, "text")).text = title
+        nav_map = etree.SubElement(root, etree.QName(NCX_NS, "navMap"))
+        for i, chapter in enumerate(self.chapters.values(), 1):
+            point = etree.SubElement(nav_map, etree.QName(NCX_NS, "navPoint"),
+                                     id=f"navPoint-{i}", playOrder=str(i))
+            label = etree.SubElement(point, etree.QName(NCX_NS, "navLabel"))
+            etree.SubElement(label, etree.QName(NCX_NS, "text")).text = chapter.title
+            etree.SubElement(point, etree.QName(NCX_NS, "content"), src=chapter.href)
+        return etree.tostring(root, encoding="utf-8", xml_declaration=True,
+                              pretty_print=True).decode("utf-8")
 
     # ------------------------------------- Manifest ---------------------------------------
 
@@ -695,6 +749,9 @@ class Book:
         Note:
             Cover images are marked with the 'cover-image' property.
         """
+        if self._archive is not None:
+            root = etree.fromstring(self._archive.package(self))
+            return [dict(item.attrib) for item in root.findall("{*}manifest/{*}item")]
         manifest = [{"id": f"{splitext(c.href)[0]}", "href": c.href, "media-type": "application/xhtml+xml"} for _, c in
                     self.chapters.items()]
         if self.cover:
@@ -729,42 +786,38 @@ class Book:
             The OPF file is the central descriptor of an EPUB archive structure.
         """
 
-        spine = [href for (href, chapter) in self.chapters.items() if
-                 href != "nav.xhtml" and href != "toc.ncx"]
+        if self._archive is not None:
+            return self._archive.package(self).decode("utf-8")
+        root = etree.Element(etree.QName(OPF_NS, "package"), nsmap={None: OPF_NS}, version="3.0")
+        metadata = etree.SubElement(root, etree.QName(OPF_NS, "metadata"),
+                                    nsmap={"opf": OPF_NS, "dc": DC_NS,
+                                           "calibre": "http://calibre.kovidgoyal.net/2009/metadata"})
+        for key, value in self.metadata.items():
+            if not value or key == "subject":
+                continue
+            if key in DC_METADATA:
+                etree.SubElement(metadata, etree.QName(DC_NS, key)).text = str(value)
+            else:
+                name = f"calibre:{key}" if key in CALIBRE_METADATA else str(key)
+                etree.SubElement(metadata, etree.QName(OPF_NS, "meta"), name=name, content=str(value))
+        for value in self.subject:
+            etree.SubElement(metadata, etree.QName(DC_NS, "subject")).text = str(value)
 
-        metadata_items = "\n".join(
-            f'<dc:{key}>{value}</dc:{key}>' for key, value in self.metadata.items() if value and key in DC_METADATA)
-
-        metadata_items += "\n".join(
-            f'<dc:subject>{value}</dc:subject>' for value in self.subject)
-
-        metadata_items += "\n".join(
-            f'<meta name = "calibre:{key}" content = "{value}"/>' for key, value in self.metadata.items() if
-            value and key in CALIBRE_METADATA)
-
-        metadata_items += "\n".join(
-            f'<meta name = "{key}" content = "{value}"/>' for key, value in self.metadata.items() if
-            value and key not in DC_METADATA and key not in CALIBRE_METADATA)
-
-        manifest_items = "\n".join(
-            f'  <item id="{item["id"]}" href="{item["href"]}" media-type="{item["media-type"]}"'
-            + (f' properties=\"{item["properties"]}\" />' if item.get("properties") else "/>")
-            for item in self.manifest
-        )
-
-        spine_items = '<itemref idref="nav" linear="false" />' + "\n".join(
-            f'<itemref idref="{splitext(idref)[0]}" />' for idref in spine)
-
-        guide = "<guide>" + "\n".join(
-            f'  <reference type="{item["type"]}" title="{item["title"]}" href="{item["href"]}" />' for item in
-            self.guide) + "</guide>" if self.guide and len(self.guide) else ""
-
-        opf = TEMPLATE_OPF.replace("$metadata_items", metadata_items).replace("$manifest_items",
-                                                                              manifest_items).replace("$spine_items",
-                                                                                                      spine_items).replace(
-            "$guide", guide)
-
-        return opf
+        manifest = etree.SubElement(root, etree.QName(OPF_NS, "manifest"))
+        for item in self.manifest:
+            etree.SubElement(manifest, etree.QName(OPF_NS, "item"), attrib=item)
+        spine = etree.SubElement(root, etree.QName(OPF_NS, "spine"), toc="toc.ncx")
+        etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref="nav", linear="false")
+        for href in self.chapters:
+            if href not in {"nav.xhtml", "toc.ncx"}:
+                etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref=splitext(href)[0])
+        if self.guide:
+            guide = etree.SubElement(root, etree.QName(OPF_NS, "guide"))
+            for item in self.guide:
+                etree.SubElement(guide, etree.QName(OPF_NS, "reference"),
+                                 attrib={key: str(item[key]) for key in ("type", "title", "href")})
+        return etree.tostring(root, encoding="utf-8", xml_declaration=True,
+                              pretty_print=True).decode("utf-8")
 
     # ----------------------------- Debug representation ---------------------------
 
@@ -812,7 +865,7 @@ class Opf:
         Raises:
             etree.ParserError: If the XML cannot be parsed.
         """
-        self.xml = etree.fromstring(opf_xml)
+        self.xml = etree.fromstring(opf_xml, parser=etree.XMLParser(resolve_entities=False, no_network=True))
 
     @classmethod
     def from_file(cls, opf_file: str) -> "Opf":
@@ -839,12 +892,13 @@ class Opf:
         Get the href of the cover image.
 
         Returns the href of the cover item from the <manifest> section if it has
-        the 'cover-image' property, otherwise returns None.
+        the 'cover-image' property among its property tokens, otherwise returns None.
 
         Returns:
             str | None: The cover image href, or None if no cover is marked.
         """
-        cover_item = self.xml.xpath(".//*[local-name()='manifest']/*[local-name()='item'][@properties='cover-image']")
+        cover_item = [item for item in self.xml.findall("{*}manifest/{*}item")
+                      if 'cover-image' in item.get('properties', '').split()]
         return cover_item[0].get("href") if cover_item else None
 
     @property
@@ -859,7 +913,7 @@ class Opf:
             list[dict[str, str]]: List of guide reference items.
         """
         return [
-            {"type": el.get("type"), "title": el.get("title"), "href": el.get("href")}
+            dict(el.attrib)
             for el in self.xml.xpath(".//*[local-name()='guide']/*[local-name()='reference']")
         ]
 
@@ -869,14 +923,15 @@ class Opf:
         Get all manifest items from the OPF.
 
         Reads all <item> elements from the <manifest> section and returns them as
-        a dictionary keyed by item id with values containing 'href' and
-        'media-type'.
+        a dictionary keyed by item id. Values preserve every item attribute
+        except the id used as the dictionary key, including properties,
+        media-overlay, fallback, and namespaced extension attributes.
 
         Returns:
             dict[str, dict[str, str | None]]: Manifest item mapping keyed by id.
         """
         return {
-            el.get("id"): {"href": el.get("href"), "media-type": el.get("media-type")}
+            el.get("id"): {key: value for key, value in el.attrib.items() if key != "id"}
             for el in self.xml.xpath(".//*[local-name()='manifest']/*[local-name()='item']")
         }
 
@@ -893,12 +948,16 @@ class Opf:
 
         Note:
             Multiple subject tags are merged into a single 'subject' key containing a set.
+            Repeated scalar fields expose their last value in this convenience view.
+            The original XML tree retains every element, attribute, and refinement.
         """
         meta = {}
         subjects = set()
         for el in self.xml.xpath(".//*[local-name()='metadata']/*"):
-            tag = el.tag.split('}')[-1]
-            text = (el.text or '').strip()
+            tag = metadata_key(el)
+            if tag is None:
+                continue
+            text = (el.get('content', el.text) or '').strip()
             if not text:
                 continue
             if tag == "subject":

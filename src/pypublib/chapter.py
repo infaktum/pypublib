@@ -20,12 +20,14 @@
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
 #
+#
+#
 
 
 from __future__ import annotations
 
 import re
-from string import Template
+from copy import deepcopy
 from typing import List
 
 import lxml.html as lhtml
@@ -36,33 +38,6 @@ from . import get_logger
 # ---------------------------------------- Logger ------------------------------------------------
 
 LOGGER = get_logger(__name__)
-
-# ---------------------------- Template for a Cover Page -----------------------------------
-
-TEMPLATE_COVER = """<?xml version='1.0' encoding='utf-8'?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:prefix="z3998: http://www.daisy.org/z3998/2012/vocab/structure/#" lang="de" xml:lang="de">
-  <head>
-  <title>Cover</title>
- </head>
-  <body style='margin: 0em; padding: 0em;'>
-    <img style='max-width: 100%; max-height: 100%;' src="$cover" alt="Cover"/>
- </body>
-</html>
-"""
-
-TEMPLATE_CHAPTER = """<?xml version='1.0' encoding='utf-8'?>
-<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN' 'http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd'>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="de">
-<head>
-    <title>$title</title>
-    $styles
-</head>
-<body>
-    $body
-</body>
-</html>
-"""
 
 # ---------------------------- XML Namespace -----------------------------------
 
@@ -76,10 +51,9 @@ class Chapter:
     Represents a single chapter (XHTML document) within the EPUB.
 
     A Chapter in an EPUB book is an XHTML file which is rendered by ebook reader software.
-    The Chapter structure stores only the BODY content of this file, which can be modified
-    by accessing the content attribute. The HEAD part of the file is generated on the fly by
-    inserting the stored title and stylesheet attributes in a template. This regeneration
-    occurs every time when the read-only HTML property is accessed.
+    Imported XHTML is retained in full. Changes to content, title, or styles update
+    only the corresponding nodes, preserving the remaining document. New chapters
+    generate their HEAD and BODY using XML elements.
 
     Attributes:
         href (str): Filename inside the EPUB archive.
@@ -102,6 +76,8 @@ class Chapter:
         self._title = title
         self.content = ""
         self.styles = []
+        self._original_html = None
+        self._original_state = None
 
     # ------------------------------------ Factory Methods -------------------------------------
 
@@ -158,16 +134,26 @@ class Chapter:
             use :meth:`from_html` instead.
         """
         try:
-            doc = etree.fromstring(html.encode("utf-8"))
+            doc = etree.fromstring(html.encode("utf-8"),
+                                   parser=etree.XMLParser(resolve_entities=False, no_network=True))
         except etree.ParserError as e:
             raise ValueError(f"Invalid HTML: {e}") from e
         title = (doc.find(".//x:title", namespaces=NS).text or "") if doc.find(".//x:title",
                                                                                namespaces=NS) is not None else ""
         styles = [link.get("href") for link in doc.findall(".//x:link[@rel='stylesheet']", namespaces=NS) if
                   link.get("href")]
-        content = etree.tostring(doc.find(".//x:body", namespaces=NS), encoding="utf-8", method="html").decode("utf-8") \
-            if doc.find(".//x:body", namespaces=NS) is not None else ""
-        return cls.from_content(href, title, content, styles)
+        body = doc.find(".//x:body", namespaces=NS)
+        chapter = cls(href, title)
+        chapter.styles = styles
+        if body is not None:
+            # Keep mixed text, tails, and namespace declarations in the fragment.
+            text = etree.Element("text")
+            text.text = body.text
+            chapter.content = (etree.tostring(text, encoding="unicode")[6:-7] if body.text else "")
+            chapter.content += "".join(etree.tostring(child, encoding="unicode") for child in body)
+        chapter._original_html = html
+        chapter._original_state = (chapter.title, chapter.content, tuple(chapter.styles))
+        return chapter
 
     @classmethod
     def from_html(cls, href: str, html: str) -> Chapter:
@@ -196,7 +182,7 @@ class Chapter:
         title = title_el.text if title_el is not None else ""
         styles = [link.get("href") for link in doc.findall(".//link[@rel='stylesheet']") if link.get("href")]
         body_el = doc.find(".//body")
-        content = lhtml.tostring(body_el, encoding="unicode", method="html") if body_el is not None else ""
+        content = lhtml.tostring(body_el, encoding="unicode", method="xml") if body_el is not None else ""
         return cls.from_content(href, title, content, styles)
 
     @classmethod
@@ -212,8 +198,10 @@ class Chapter:
         Returns:
             Chapter: A new Chapter instance with cover styling applied.
         """
-        html = Template(TEMPLATE_COVER).substitute(cover=name)
-        return cls.from_xhtml("Cover.xhtml", html)
+        image = etree.Element("img", src=name, alt="Cover",
+                              style="max-width: 100%; max-height: 100%;")
+        return cls.from_content("Cover.xhtml", "Cover",
+                                etree.tostring(image, encoding="unicode", method="xml"))
 
     # ----------------------------------- Head Management -------------------------------------------
 
@@ -232,13 +220,15 @@ class Chapter:
         """
         Set the chapter title and update the href accordingly.
 
-        The chapter href will be updated to "{title}.xhtml" to maintain consistency.
+        New chapters update their href to "{title}.xhtml". Imported chapters keep
+        their archive path so existing links and manifest references remain valid.
 
         Args:
             title (str): New title string.
         """
         self._title = title
-        self.href = f"{title}.xhtml"
+        if self._original_html is None:
+            self.href = f"{title}.xhtml"
 
     def add_style(self, style: str) -> None:
         """
@@ -260,15 +250,73 @@ class Chapter:
         Get the full chapter HTML including HEAD and BODY.
 
         Generates the HEAD section on the fly from the title and styles attributes,
-        and combines it with the stored content attribute in the TEMPLATE_CHAPTER.
+        and includes the stored body markup without escaping it as plain text.
 
         Returns:
             str: Complete XHTML document as string.
         """
-        stylesheets = "\n".join(f'<link rel="stylesheet" type="text/css" href="{sheet}"/>' for sheet in self.styles)
-        body = self.content or ""
-        html = Template(TEMPLATE_CHAPTER).substitute(title=self.title, styles=stylesheets, body=body)
-        return html
+        if self._original_html is not None:
+            state = (self.title, self.content, tuple(self.styles))
+            if state == self._original_state:
+                return self._original_html
+            root = etree.fromstring(self._original_html.encode("utf-8"),
+                                    parser=etree.XMLParser(resolve_entities=False, no_network=True))
+            head = root.find("x:head", NS)
+            if head is None:
+                head = etree.SubElement(root, etree.QName(NS["x"], "head"))
+            if self.title != self._original_state[0]:
+                title = head.find("x:title", NS)
+                if title is None:
+                    title = etree.SubElement(head, etree.QName(NS["x"], "title"))
+                title.text = self.title
+            if tuple(self.styles) != self._original_state[2]:
+                links = head.findall("x:link[@rel='stylesheet']", NS)
+                for link in links:
+                    if link.get("href") not in self.styles:
+                        head.remove(link)
+                for sheet in self.styles:
+                    if not any(link.get("href") == sheet for link in links):
+                        etree.SubElement(head, etree.QName(NS["x"], "link"),
+                                         rel="stylesheet", type="text/css", href=sheet)
+            if self.content != self._original_state[1]:
+                body = root.find("x:body", NS)
+                if body is None:
+                    body = etree.SubElement(root, etree.QName(NS["x"], "body"))
+                # Serialize an empty copy to retain all in-scope namespaces.
+                wrapper = deepcopy(body)
+                wrapper.text = None
+                for child in list(wrapper):
+                    wrapper.remove(child)
+                wrapper.text = "__PYPUBLIB_BODY__"
+                markup = etree.tostring(wrapper, encoding="unicode", with_tail=False)
+                before, _, after = markup.rpartition("__PYPUBLIB_BODY__")
+                markup = before + (self.content or "") + after
+                replacement = etree.fromstring(markup.encode("utf-8"),
+                                               parser=etree.XMLParser(resolve_entities=False, no_network=True))
+                body.text = replacement.text
+                for child in list(body):
+                    body.remove(child)
+                body.extend(replacement)
+            return etree.tostring(root.getroottree(), encoding="utf-8", xml_declaration=True).decode("utf-8")
+
+        root = etree.Element(etree.QName(NS["x"], "html"), nsmap={None: NS["x"]})
+        root.set(etree.QName("http://www.w3.org/XML/1998/namespace", "lang"), "de")
+        head = etree.SubElement(root, etree.QName(NS["x"], "head"))
+        etree.SubElement(head, etree.QName(NS["x"], "title")).text = self.title
+        for sheet in self.styles:
+            etree.SubElement(head, etree.QName(NS["x"], "link"),
+                             rel="stylesheet", type="text/css", href=sheet)
+        # content is an XHTML fragment, not a scalar text value. Parse it in the
+        # XHTML namespace to preserve elements, mixed text, and escaped entities.
+        body = etree.fromstring(
+            ('<body xmlns="http://www.w3.org/1999/xhtml">' + (self.content or "") + '</body>').encode("utf-8"),
+            parser=etree.XMLParser(resolve_entities=False, no_network=True),
+        )
+        root.append(body)
+        return etree.tostring(
+            root, encoding="utf-8", xml_declaration=True,
+            doctype="<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN' 'http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd'>",
+        ).decode("utf-8")
 
     @html.setter
     def html(self, page: str) -> None:
@@ -278,10 +326,15 @@ class Chapter:
         Returns:
             str: Complete XHTML document as string.
         """
-        parsed = Chapter.from_html(self.href, page)
+        try:
+            parsed = Chapter.from_xhtml(self.href, page)
+        except etree.XMLSyntaxError:
+            parsed = Chapter.from_html(self.href, page)
         self._title = parsed.title
         self.styles = parsed.styles
         self.content = parsed.content
+        self._original_html = parsed._original_html
+        self._original_state = parsed._original_state
 
     @property
     def images(self) -> List[str]:

@@ -141,10 +141,10 @@ class TestEdit(unittest.TestCase):
     def test_remove_unnecessary_files_removes_unreferenced_assets(self):
         book = Book({"title": "A", "creator": "B", "language": "en"})
         chapter = Chapter.from_content(
-            "chapter1.xhtml",
+            "Text/chapter1.xhtml",
             "One",
             "<p>x</p><img src='../images/used.png'/>",
-            ["styles/used.css"],
+            ["../styles/used.css"],
         )
         book.add_chapter(chapter)
         book.styles = {"styles/used.css": "body{}", "unused.css": "p{}"}
@@ -168,7 +168,7 @@ class TestEdit(unittest.TestCase):
         self.assertEqual(set(result.images.keys()), {"cover.jpg"})
         self.assertEqual(result.styles, {})
 
-    def test_remove_unnecessary_files_matches_styles_by_basename(self):
+    def test_remove_unnecessary_files_does_not_match_styles_by_basename(self):
         book = Book({"title": "A", "creator": "B", "language": "en"})
         chapter = Chapter.from_content("chapter1.xhtml", "One", "<p>x</p>", ["text/main.css"])
         book.add_chapter(chapter)
@@ -177,7 +177,7 @@ class TestEdit(unittest.TestCase):
         result = edit.remove_unnecessary_files(book)
 
         self.assertIs(result, book)
-        self.assertEqual(set(result.styles.keys()), {"main.css"})
+        self.assertEqual(result.styles, {})
 
     def test_pretty_print_xml_returns_input(self):
         xml = "<root><a>1</a></root>"

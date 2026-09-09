@@ -19,11 +19,13 @@
 #  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 #  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #  SOFTWARE.
+#
+#
+#
 
 import os
 import re
 import tempfile
-
 
 from . import get_logger
 from .book import Book
@@ -150,49 +152,14 @@ def edit_chapter_tags(chapter, replacements):
 # -------------------------------- Removal of unnecessary files ---------------------
 
 
-def _resource_candidates(path: str) -> set[str]:
-    """Build comparable key variants for resource path matching."""
-    if not path:
-        return set()
-
-    cleaned = path.strip().replace("\\", "/")
-    cleaned = cleaned.split("#", 1)[0].split("?", 1)[0]
-    cleaned = cleaned.lstrip("./")
-
-    if not cleaned:
-        return set()
-
-    parts = []
-    for part in cleaned.split("/"):
-        if not part or part == ".":
-            continue
-        if part == ".." and parts and parts[-1] != "..":
-            parts.pop()
-            continue
-        parts.append(part)
-
-    normalized = "/".join(parts)
-    if normalized in {".", ""}:
-        return set()
-
-    candidates = {normalized, normalized.lstrip("/")}
-    basename = normalized.split("/")[-1]
-    if basename:
-        candidates.add(basename)
-
-    while normalized.startswith("../"):
-        normalized = normalized[3:]
-        if normalized:
-            candidates.add(normalized)
-
-    return {candidate for candidate in candidates if candidate}
-
-
 def remove_unnecessary_files(book: "Book") -> "Book":
     """Remove unreferenced image and CSS files from the book.
 
     Keeps resources that are referenced by at least one chapter via stylesheet
     links or image tags. The cover image is always preserved if set.
+    References are resolved relative to their chapter before matching the
+    OPF-relative resource keys; equal basenames in different directories do
+    not count as matches.
 
     Args:
         book (Book): Book instance containing chapters, styles and images.
@@ -205,22 +172,28 @@ def remove_unnecessary_files(book: "Book") -> "Book":
 
     for chapter in book.chapters.values():
         for style in chapter.styles:
-            used_styles.update(_resource_candidates(style))
+            key = book.resource_key(book.styles, style, chapter.href)
+            if key is not None:
+                used_styles.add(key)
         for image in chapter.images:
-            used_images.update(_resource_candidates(image))
+            key = book.resource_key(book.images, image, chapter.href)
+            if key is not None:
+                used_images.add(key)
 
     if book.cover:
-        used_images.update(_resource_candidates(book.cover))
+        key = book.resource_key(book.images, book.cover)
+        if key is not None:
+            used_images.add(key)
 
     book.styles = {
         name: sheet
         for name, sheet in book.styles.items()
-        if _resource_candidates(name) & used_styles
+        if name in used_styles
     }
     book.images = {
         name: image
         for name, image in book.images.items()
-        if _resource_candidates(name) & used_images
+        if name in used_images
     }
 
     return book
