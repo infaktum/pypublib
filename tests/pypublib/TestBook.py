@@ -98,7 +98,6 @@ class TestBookAdvanced(unittest.TestCase):
         book.subject = " one "
         book.subject = (" two ", " ")
         book.series = (" Series ", 2)
-        book.metadata["series"] = []
         book.series = "Part 1"
 
         self.assertEqual(book.title, "T")
@@ -111,7 +110,7 @@ class TestBookAdvanced(unittest.TestCase):
         self.assertEqual(book.date, "2026-01-01")
         self.assertIn("one", book.subject)
         self.assertIn("two", book.subject)
-        self.assertEqual(book.series, ["Part 1"])
+        self.assertEqual(book.series, "Part 1")
         self.assertIn("Part 1", book.metadata["series"])
 
     def test_set_metadata_nav_ncx_manifest_opf_and_repr(self):

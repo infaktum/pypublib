@@ -246,7 +246,7 @@ class TestArchivePreservation(unittest.TestCase):
         self.assertEqual(entries['EPUB/Styles/main.css'], self.entries['EPUB/Styles/main.css'])
 
     def test_encoded_rename_and_addition_keep_queries_and_fragments(self):
-        from pypublib._archive import archive_path
+        from pypublib._utils import archive_path
         self.book.chapters['Text/one.xhtml'].href = 'Text/new%23name%3F%25.xhtml'
         self.book.add_chapter(Chapter.from_content('Text/added%23name.xhtml', 'Added', '<p>new</p>'))
         entries = self.saved_entries()
@@ -402,7 +402,7 @@ class TestArchivePreservation(unittest.TestCase):
         self.assert_save_rejected('Conflicting spine edits')
 
     def test_metadata_namespaces_stay_separate_during_import_and_edit(self):
-        from pypublib._archive import META_KEY_PREFIX
+        from pypublib._utils import META_KEY_PREFIX
         from pypublib.book import Opf
 
         ns = {'o': 'http://www.idpf.org/2007/opf', 'dc': 'http://purl.org/dc/elements/1.1/'}
@@ -440,7 +440,7 @@ class TestArchivePreservation(unittest.TestCase):
 
     def test_same_path_save_and_failed_replacement_preserve_source(self):
         original = self.source.read_bytes()
-        with patch('pypublib._archive.os.replace', side_effect=OSError('test failure')):
+        with patch('pypublib.archive_state.os.replace', side_effect=OSError('test failure')):
             with self.assertRaises(OSError):
                 self.saved_entries(path=self.source)
         self.assertEqual(self.source.read_bytes(), original)

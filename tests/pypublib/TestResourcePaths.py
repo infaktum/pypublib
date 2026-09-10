@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-from pypublib._archive import archive_path
+from pypublib._utils import archive_path
 from pypublib.book import Book
 from pypublib.chapter import Chapter
 from pypublib.edit import remove_unnecessary_files

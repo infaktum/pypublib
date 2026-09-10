@@ -121,22 +121,16 @@ class TestEdit(unittest.TestCase):
         self.assertIn(".keep", content)
         self.assertNotIn(".drop", content)
 
-    def test_remove_unused_styles_keeps_and_removes_styles(self):
+    def test_remove_unused_styles_preserves_used_rules_and_link_targets(self):
         book = Book({"title": "A", "creator": "B"})
-        book.styles = {"keep.css": "body{}", "drop.css": "p{}"}
-
-        def fake_clean(temp_dir):
-            os.remove(os.path.join(temp_dir, "drop.css"))
-            with open(os.path.join(temp_dir, "keep.css"), "w", encoding="utf-8") as f:
-                f.write("body{color:black;}")
-
-        with patch("pypublib.edit.clean_unused_styles", side_effect=fake_clean):
-            result = edit.remove_unused_styles(book)
+        book.add_chapter(Chapter.from_content('one.xhtml', 'One', '<p>Text</p>', ['keep.css', 'drop.css']))
+        book.styles = {"keep.css": "body{color:black;}", "drop.css": ".absent{color:red;}"}
+        result = edit.remove_unused_styles(book)
 
         self.assertIs(result, book)
         self.assertIn("keep.css", result.styles)
         self.assertEqual(result.styles["keep.css"], "body{color:black;}")
-        self.assertNotIn("drop.css", result.styles)
+        self.assertEqual(result.styles['drop.css'], '')
 
     def test_remove_unnecessary_files_removes_unreferenced_assets(self):
         book = Book({"title": "A", "creator": "B", "language": "en"})

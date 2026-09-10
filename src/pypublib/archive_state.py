@@ -21,8 +21,9 @@
 #  SOFTWARE.
 #
 #
+#
 
-"""Preserve imported EPUB documents and apply model changes without regeneration."""
+"""Track imported EPUB archives and save model changes without regeneration."""
 
 import mimetypes
 import os
@@ -32,207 +33,15 @@ import tempfile
 import zipfile
 from copy import copy, deepcopy
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from lxml import etree
 
-OPF = "http://www.idpf.org/2007/opf"
-DC = "http://purl.org/dc/elements/1.1/"
-XHTML = "http://www.w3.org/1999/xhtml"
-EPUB = "http://www.idpf.org/2007/ops"
-NCX = "http://www.daisy.org/z3986/2005/ncx/"
-NS = {"o": OPF, "dc": DC, "x": XHTML, "epub": EPUB, "n": NCX}
-GROUPS = ("chapters", "styles", "images", "fonts")
-DC_FIELDS = {'title', 'creator', 'subject', 'description', 'publisher', 'contributor',
-             'date', 'type', 'format', 'identifier', 'source', 'language', 'relation',
-             'coverage', 'rights'}
-META_KEY_PREFIX = '{' + OPF + '}meta/'
-
-
-def relative_url(base, target, original=''):
-    """
-    Encode an archive target as a relative URL while retaining URL suffixes.
-
-    Args:
-        base (str): Archive path of the referring document.
-        target (str): Decoded archive path of the target resource.
-        original (str): Original URL supplying its query string and fragment.
-
-    Returns:
-        str: Relative URL with percent-encoded path characters. Slashes remain
-        path separators; literal percent signs, question marks, and hashes in
-        filenames cannot become URL syntax.
-    """
-    suffix = urlsplit(original)
-    path = posixpath.relpath(target, posixpath.dirname(base))
-    if suffix.path.endswith('/'):
-        path += '/'
-    return urlunsplit(('', '', quote(path, safe='/'), suffix.query, suffix.fragment))
-
-
-def rewrite_url(href, old_base, new_base, renames):
-    """
-    Retarget a local URL after a document or its target has moved.
-
-    Args:
-        href (str): Original URL from a document or stylesheet.
-        old_base (str): Original referring document's archive path.
-        new_base (str): Output referring document's archive path.
-        renames (dict[str, str]): Original archive paths mapped to output paths.
-
-    Returns:
-        str: Adjusted URL, or the original spelling when it already resolves to
-        the intended target. External and data URLs are returned unchanged.
-    """
-    target = archive_path(old_base, href)
-    if target is None:
-        return href
-    target = renames.get(target, target)
-    if archive_path(new_base, href) == target:
-        return href
-    return relative_url(new_base, target, href)
-
-
-def rewrite_css(css, old_base, new_base, renames):
-    """
-    Rewrite CSS url() and quoted @import references without reformatting rules.
-
-    Args:
-        css (str): Stylesheet or inline style text.
-        old_base (str): Original containing document's archive path.
-        new_base (str): Output containing document's archive path.
-        renames (dict[str, str]): Original-to-output archive path mapping.
-
-    Returns:
-        str: CSS with adjusted references. Comments and unrelated string values
-        are retained verbatim; CSS escapes in URLs are decoded before resolution.
-    """
-    tokens = re.compile(
-        r'''/\*.*?\*/|(?P<url>url\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:\\.|[^)"'])*)\s*\))|(?P<import>@import\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',
-        re.IGNORECASE | re.DOTALL | re.VERBOSE,
-    )
-
-    def replace(match):
-        """
-        Replace one URL token, leaving comments and ordinary strings intact.
-
-        Args:
-            match (re.Match): CSS URL, import, comment, or string token.
-
-        Returns:
-            str: Original token or an escaped replacement URL token.
-        """
-        token = match.group()
-        if match.group('url'):
-            value = token[token.index('(') + 1:-1].strip()
-        elif match.group('import'):
-            value = token[len('@import'):].strip()
-        else:
-            return token
-        if value[:1] in {'"', "'"}:
-            value = value[1:-1]
-        value = re.sub(r'\\([0-9a-fA-F]{1,6})\s?|\\(\r\n|[\n\r\f])|\\(.)',
-                       lambda m: chr(int(m[1], 16)) if m[1] and 0 < int(m[1], 16) <= 0x10ffff
-                       else (m[3] or ''), value)
-        updated = rewrite_url(value, old_base, new_base, renames)
-        if updated == value:
-            return token
-        escaped = updated.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\a ')
-        return 'url("' + escaped + '")' if match.group('url') else '@import "' + escaped + '"'
-
-    return tokens.sub(replace, css)
-
-
-def archive_path(base: str, href: str) -> str | None:
-    """
-    Resolve a publication URL to a normalized ZIP entry path.
-
-    Resolves relative paths against the containing document using POSIX path
-    rules, independent of the operating system. Percent escapes are decoded
-    once; query strings and fragments are excluded from the resulting path.
-    A fragment-only reference points to the containing document itself.
-
-    Args:
-        base (str): Archive path of the document containing the reference.
-        href (str): Local relative or absolute URL, or an external URL.
-
-    Returns:
-        str | None: Normalized archive path without a leading slash, or None
-        for external URLs, including HTTP, protocol-relative, and data URLs.
-
-    Example:
-        >>> archive_path("EPUB/Text/chapter.xhtml", "../Images/my%20cover.png#view")
-        'EPUB/Images/my cover.png'
-    """
-    url = urlsplit(href)
-    if url.scheme or url.netloc:
-        return None
-    if not url.path:
-        return base
-    return posixpath.normpath(posixpath.join(posixpath.dirname(base), unquote(url.path))).lstrip('/')
-
-
-def parse_xml(data: bytes):
-    """
-    Parse a complete XML document while retaining its document-level data.
-
-    Keeps namespaces, comments, processing instructions, and the document type.
-    External entities are not expanded and network retrieval is disabled.
-
-    Args:
-        data (bytes): Original XML bytes, including any encoding declaration.
-
-    Returns:
-        etree._ElementTree: Parsed document with its complete root tree.
-
-    Raises:
-        etree.XMLSyntaxError: If the supplied data is not well-formed XML.
-    """
-    return etree.fromstring(data, parser=etree.XMLParser(resolve_entities=False, no_network=True)).getroottree()
-
-
-def xml_bytes(tree) -> bytes:
-    """
-    Serialize an XML tree to UTF-8 without adding formatting whitespace.
-
-    Args:
-        tree (etree._ElementTree): Complete document to serialize.
-
-    Returns:
-        bytes: XML with an encoding declaration and retained document-level
-        nodes. Text and attribute values are escaped by lxml.
-    """
-    return etree.tostring(tree, encoding="utf-8", xml_declaration=True)
-
-
-def metadata_key(element) -> str | None:
-    """
-    Map an OPF metadata element to its convenience-dictionary key.
-
-    Uses local names only for Dublin Core elements. Extension elements retain
-    their expanded XML names, keeping equally named fields in different
-    namespaces separate. OPF meta names colliding with Dublin Core fields use
-    the prefix ``{OPF namespace}meta/``. Calibre series keys omit calibre: to
-    match Book's convenience properties. The XML element is not modified.
-
-    Args:
-        element (etree._Element): Metadata child, comment, or processing instruction.
-
-    Returns:
-        str | None: Dictionary key, or None for non-element nodes.
-    """
-    if not isinstance(element.tag, str):
-        return None
-    qualified = etree.QName(element)
-    name = qualified.localname
-    if qualified.namespace == DC:
-        return name
-    if qualified.namespace == OPF and name == "meta":
-        name = element.get("name") or element.get("property") or name
-        if name.startswith("calibre:"):
-            name = name[len("calibre:"):]
-        return META_KEY_PREFIX + name if name in DC_FIELDS else name
-    return element.tag if qualified.namespace else '{}' + name
+from ._utils import (
+    DC, DC_FIELDS, GROUPS, META_KEY_PREFIX, NCX, NS, OPF, XHTML,
+    archive_path, metadata_key, parse_xml, relative_url,
+    rewrite_css, rewrite_url, xml_bytes,
+)
 
 
 class ArchiveState:
@@ -243,7 +52,7 @@ class ArchiveState:
         Capture an imported book's archive and editable model as a baseline.
 
         Initializes book.archive_entries and book.package_document. Original
-        ZIP records remain separate so duplicate entry names and per-entry
+        ZIP records remain separate, so duplicate entry names and per-entry
         metadata can be retained. Mutable metadata and resource values are
         copied to detect later edits independently of the original snapshots.
 
@@ -380,8 +189,8 @@ class ArchiveState:
         Copies book.package_document and applies metadata, resource, spine,
         cover, and guide edits. Original manifest IDs and item attributes are
         retained wherever possible. New resources receive unique IDs; deleted
-        resources lose their manifest and spine references. The live XML tree
-        and the import baseline are not modified by this method.
+        resources lose their manifest and spine references. This method does not
+        modify the live XML tree and the import baseline.
 
         Args:
             book (Book): Imported book containing current model and XML edits.
@@ -510,7 +319,7 @@ class ArchiveState:
 
         Checks unique manifest IDs and normalized local paths, existing local
         resource targets, and spine references. Unchanged imported OPF bytes
-        bypass this validation so merely copying a legacy book remains possible.
+        bypass this validation, so merely copying a legacy book remains possible.
 
         Args:
             tree (etree._ElementTree): Updated OPF document to validate.
@@ -694,7 +503,7 @@ class ArchiveState:
                 new_base (str): Output inherited base URI inside the archive.
 
             Returns:
-                bool: True if any local URL or inline CSS in the subtree changed.
+                bool: True if any local URL or inline CSS in the subtree has changed.
                 Subtrees with an external XML base are left untouched.
             """
             changed = False
@@ -787,8 +596,8 @@ class ArchiveState:
 
         Raises:
             ValueError: If a typed resource uses an external URL as its output path.
-            etree.XMLSyntaxError: If edited XML cannot be parsed.
-            KeyError: If required OPF or navigation data is missing.
+            etree.XMLSyntaxError: If the edited XML cannot be parsed.
+            KeyError: If the required OPF or navigation data is missing.
         """
         entries = book.archive_entries.copy()
         resources = self._resources(book)
@@ -834,7 +643,7 @@ class ArchiveState:
         Raises:
             OSError: If creating, writing, or replacing the output fails.
             ValueError: If model data cannot be serialized or uses a remote path.
-            etree.XMLSyntaxError: If edited XML cannot be parsed.
+            etree.XMLSyntaxError: If the edited XML cannot be parsed.
 
         Note:
             Unchanged entry contents remain byte-identical, but the ZIP container

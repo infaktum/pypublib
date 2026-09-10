@@ -24,12 +24,16 @@
 #
 
 import os
+import posixpath
 import re
-import tempfile
+from urllib.parse import quote, urljoin
+
+from lxml import etree
 
 from . import get_logger
 from .book import Book
 from .chapter import Chapter
+from ._utils import clean_css, css_references, used_selectors as markup_selectors
 
 # ---------------------------------------- Logger ------------------------------------------------
 
@@ -155,8 +159,8 @@ def edit_chapter_tags(chapter, replacements):
 def remove_unnecessary_files(book: "Book") -> "Book":
     """Remove unreferenced image and CSS files from the book.
 
-    Keeps resources that are referenced by at least one chapter via stylesheet
-    links or image tags. The cover image is always preserved if set.
+    Follows chapter references, inline CSS and transitive stylesheet imports
+    and image URLs. Import cycles are visited only once. The cover is retained.
     References are resolved relative to their chapter before matching the
     OPF-relative resource keys; equal basenames in different directories do
     not count as matches.
@@ -169,21 +173,81 @@ def remove_unnecessary_files(book: "Book") -> "Book":
     """
     used_styles = set()
     used_images = set()
+    pending = []
+
+    def follow(href, base):
+        target = urljoin(base, href)
+        key = book.resource_key(book.images, target)
+        if key is not None:
+            used_images.add(key)
+        key = book.resource_key(book.styles, target)
+        if key is not None and key not in used_styles:
+            used_styles.add(key)
+            pending.append(key)
+
+    def inspect_markup(data, base):
+        root = etree.fromstring(data, parser=etree.XMLParser(resolve_entities=False, no_network=True))
+        bases = root.xpath('//*[local-name()="head"]/*[local-name()="base"]/@href')
+        if bases:
+            base = urljoin(base, bases[0])
+
+        def visit(element, inherited_base):
+            if not isinstance(element.tag, str):
+                return
+            local_base = urljoin(inherited_base, element.get('{http://www.w3.org/XML/1998/namespace}base', ''))
+            for attribute, value in element.attrib.items():
+                name = etree.QName(attribute).localname
+                if name in {'href', 'src', 'poster', 'data'}:
+                    follow(value, local_base)
+                elif name == 'srcset':
+                    for candidate in value.split(','):
+                        if candidate.strip():
+                            follow(candidate.split()[0], local_base)
+            css = element.get('style', '')
+            if etree.QName(element).localname == 'style':
+                css += element.text or ''
+            for dependency in css_references(css):
+                follow(dependency, local_base)
+            for child in element:
+                visit(child, local_base)
+
+        visit(root, base)
 
     for chapter in book.chapters.values():
         for style in chapter.styles:
-            key = book.resource_key(book.styles, style, chapter.href)
-            if key is not None:
-                used_styles.add(key)
+            follow(style, chapter.href)
         for image in chapter.images:
             key = book.resource_key(book.images, image, chapter.href)
             if key is not None:
                 used_images.add(key)
 
+        inspect_markup(chapter.html.encode('utf-8'), chapter.href)
+
+    # Raw imported documents can contain dependencies absent from the editable
+    # chapter view (navigation, SVG, scripts). Retain their resources conservatively.
+    if book._archive is not None:
+        for path, data in book.archive_entries.items():
+            if path.lower().endswith(('.xhtml', '.html', '.svg', '.css', '.js')):
+                base = quote(posixpath.relpath(path, posixpath.dirname(book._archive.path)), safe='/')
+                try:
+                    if path.lower().endswith(('.xhtml', '.html', '.svg')):
+                        inspect_markup(data, base)
+                    else:
+                        for dependency in css_references(data.decode('utf-8')):
+                            follow(dependency, base)
+                except (UnicodeError, etree.XMLSyntaxError):
+                    used_styles.update(book.styles)
+                    used_images.update(book.images)
+
     if book.cover:
         key = book.resource_key(book.images, book.cover)
         if key is not None:
             used_images.add(key)
+
+    while pending:
+        key = pending.pop()
+        for dependency in css_references(book.styles[key]):
+            follow(dependency, key)
 
     book.styles = {
         name: sheet
@@ -216,17 +280,16 @@ def collect_used_selectors(content_dir):
         set: Set of used CSS selectors (e.g., {'.classname', '#idname'}).
     """
     used_selectors = set()
-    xhtml_pattern = re.compile(r'class="([^"]+)"|id="([^"]+)"')
     for root, _, files in os.walk(content_dir):
         for file in files:
             if file.endswith('.xhtml') or file.endswith('.html'):
                 with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
                     content = f.read()
-                    for match in xhtml_pattern.findall(content):
-                        if match[0]:
-                            used_selectors.update(['.' + cls for cls in match[0].split()])
-                        if match[1]:
-                            used_selectors.add('#' + match[1])
+                    # HTML inputs need not be XML-well-formed.
+                    from lxml import html
+                    document = html.fromstring(content)
+                    used_selectors.update(markup_selectors(
+                        etree.tostring(document, encoding='unicode', method='xml')))
     return used_selectors
 
 
@@ -244,20 +307,12 @@ def process_css_file(css_path, used_selectors):
     Returns:
         list: List of removed selectors.
     """
-    css_rule_pattern = re.compile(r'([^{]+)\{[^}]*}', re.MULTILINE)
     with open(css_path, 'r', encoding='utf-8') as f:
         css_content = f.read()
-    new_css = ''
-    removed_selectors = []
-    for rule in css_rule_pattern.finditer(css_content):
-        selectors = [selector.strip() for selector in rule.group(1).split(',')]
-        if any(selector in used_selectors for selector in selectors):
-            new_css += rule.group(0) + '\n'
-        else:
-            removed_selectors.extend(selectors)
+    new_css, removed_selectors = clean_css(css_content, used_selectors)
     with open(css_path, 'w', encoding='utf-8') as f:
         f.write(new_css)
-    print(f"Removed selectors from {css_path}: {removed_selectors}")
+    LOGGER.debug('Removed selectors from %s: %s', css_path, removed_selectors)
     return removed_selectors
 
 
@@ -296,34 +351,18 @@ def remove_unused_styles(book: "Book") -> "Book":
         Book: The book with cleaned stylesheets.
 
     Note:
-        This function creates temporary files during processing. Any style
-        files that become empty after cleaning are removed from the book.
+        Processes styles in memory and preserves empty sheets so existing
+        links and imports remain valid. Complex CSS rules are retained.
     """
-    temp_dir = tempfile.mkdtemp()
-    try:
-        # Save styles to temporary files
-        for name, sheet in book.styles.items():
-            style_path = os.path.join(temp_dir, name)
-            with open(style_path, "w", encoding="utf-8") as f:
-                f.write(sheet)
-
-        clean_unused_styles(temp_dir)
-
-        # Load cleaned styles back into the book
-        for name in list(book.styles.keys()):
-            style_path = os.path.join(temp_dir, name)
-            if os.path.isfile(style_path):
-                with open(style_path, "r", encoding="utf-8") as f:
-                    book.styles[name] = f.read()
-            else:
-                del book.styles[name]  # Style was removed
-
-    finally:
-        # Clean up temporary directory
-        for root, dirs, files in os.walk(temp_dir, topdown=False):
-            for file in files:
-                os.remove(os.path.join(root, file))
-            for d in dirs:
-                os.rmdir(os.path.join(root, d))
-        os.rmdir(temp_dir)
+    used = set()
+    for chapter in book.chapters.values():
+        used.update(markup_selectors(chapter.html))
+    for path, data in book.archive_entries.items():
+        if path.endswith(('.xhtml', '.html', '.svg')):
+            try:
+                used.update(markup_selectors(data.decode('utf-8')))
+            except (UnicodeError, etree.XMLSyntaxError):
+                return book  # Unknown markup prevents a safe deletion decision.
+    # Keep empty sheets, since chapter links and CSS imports still refer to them.
+    book.styles = {name: clean_css(sheet, used)[0] for name, sheet in book.styles.items()}
     return book

@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import re
+from html import escape
 
 # ------------------------------------- Html -------------------------------------
 
@@ -50,7 +51,7 @@ class Html:
             >>> Html.p("Styled", class_name="intro")
             '<p class="intro">Styled</p>'
         """
-        class_attr = f' class="{class_name}"' if class_name else ''
+        class_attr = f' class="{escape(class_name, quote=True)}"' if class_name else ''
         return f'<p{class_attr}>{text}</p>'
 
     @staticmethod
@@ -140,8 +141,8 @@ class Html:
         Returns:
             str: HTML anchor element string.
         """
-        class_attr = f' class="{class_name}"' if class_name else ''
-        return f'<a href="{href}"{class_attr}>{text}</a>'
+        class_attr = f' class="{escape(class_name, quote=True)}"' if class_name else ''
+        return f'<a href="{escape(href, quote=True)}"{class_attr}>{text}</a>'
 
     @staticmethod
     def img(src, alt_text='Image'):
@@ -155,7 +156,7 @@ class Html:
         Returns:
             str: HTML image element string.
         """
-        return f'<img src="{src}" alt="{alt_text}"/>'
+        return f'<img src="{escape(src, quote=True)}" alt="{escape(alt_text, quote=True)}"/>'
 
     @staticmethod
     def ul(items):
@@ -211,7 +212,7 @@ class Html:
         Returns:
             str: HTML pre/code element string.
         """
-        return f'<pre><code class="{language}">{code}\n</code></pre>'
+        return f'<pre><code class="{escape(language, quote=True)}">{escape(code, quote=False)}\n</code></pre>'
 
     @staticmethod
     def hr():
@@ -244,7 +245,7 @@ class Html:
         Returns:
             str: HTML non-breaking space entities string.
         """
-        return '&nbsp;' * count
+        return '&#160;' * count
 
     @staticmethod
     def pagebreak(id_: int = 1) -> str:
@@ -331,7 +332,10 @@ class MarkdownConverter:
         """
         html = [line for line in MarkdownConverter.parse(text)]
         html = '\n'.join(html)
-        return MarkdownConverter.strong_or_em(html)
+        # Apply emphasis only to text, never to code blocks or HTML attributes.
+        parts = re.split(r'(<pre\b[^>]*>.*?</pre>|<[^>]+>)', html, flags=re.DOTALL)
+        return ''.join(part if part.startswith('<') else MarkdownConverter.strong_or_em(part)
+                       for part in parts)
 
     @staticmethod
     def parse(text):
@@ -371,7 +375,7 @@ class MarkdownConverter:
                     buffer = []
                 items = []
                 while i < len(lines) and lines[i].strip().startswith('* '):
-                    items.append(lines[i].strip()[2:])
+                    items.append(escape(lines[i].strip()[2:], quote=False))
                     i += 1
                 yield Html.ul(items)
                 continue
@@ -383,13 +387,13 @@ class MarkdownConverter:
                     buffer = []
                 items = []
                 while i < len(lines) and (lines[i].strip().startswith('. ') or lines[i].strip().startswith('1. ')):
-                    items.append(lines[i].strip()[2:])
+                    items.append(escape(re.sub(r'^(?:1\.|\.)\s+', '', lines[i].strip()), quote=False))
                     i += 1
                 yield Html.ol(items)
                 continue
 
             # Codeblock-Erkennung: ''' ... '''
-            if line == "```":
+            if line.startswith("```"):
                 if buffer:
                     yield Html.p(' '.join(buffer))
                     buffer = []
@@ -398,7 +402,7 @@ class MarkdownConverter:
                 while i < len(lines) and lines[i].strip() != "```":
                     code_lines.append(lines[i])
                     i += 1
-                yield Html.code('\n'.join(code_lines))
+                yield Html.code('\n'.join(code_lines), language=line[3:].strip())
                 i += 1
                 continue
 
@@ -421,13 +425,13 @@ class MarkdownConverter:
                     yield Html.p(' '.join(buffer))
                     buffer = []
                 level = len(header_match.group(1))
-                yield Html.header(header_match.group(2), level=level)
+                yield Html.header(escape(header_match.group(2), quote=False), level=level)
 
             elif line.startswith('> '):
                 if buffer:
                     yield Html.p(' '.join(buffer))
                     buffer = []
-                yield Html.blockquote(line[2:])
+                yield Html.blockquote(escape(line[2:], quote=False))
 
             elif line == '---':
                 if buffer:
@@ -442,7 +446,7 @@ class MarkdownConverter:
 
 
             else:
-                buffer.append(line)
+                buffer.append(escape(line, quote=False))
             i += 1
         if buffer:
             yield Html.p(' '.join(buffer))

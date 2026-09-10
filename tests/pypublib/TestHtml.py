@@ -51,8 +51,8 @@ class TestHtml(unittest.TestCase):
         self.assertEqual(Html.br(), "<br/>")
 
     def test_nbsp(self):
-        self.assertEqual(Html.nbsp(), "&nbsp;")
-        self.assertEqual(Html.nbsp(3), "&nbsp;&nbsp;&nbsp;")
+        self.assertEqual(Html.nbsp(), "&#160;")
+        self.assertEqual(Html.nbsp(3), "&#160;&#160;&#160;")
 
     def test_pagebreak(self):
         self.assertEqual(Html.pagebreak(), '<div style="page-break-after: always;"></div>')

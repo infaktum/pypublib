@@ -1,6 +1,30 @@
+#  MIT License
+#  #
+#  Copyright (c) 2026 Heiko Sippel
+#  #
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#  #
+#  The above copyright notice and this permission notice shall be included in all
+#  copies or substantial portions of the Software.
+#  #
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#  SOFTWARE.
+#
+#
+#
+
 # MIT License
 #
-# Copyright (c) 2025 Heiko Sippel
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -9,29 +33,20 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-
 from __future__ import annotations
 
+import mimetypes
 import uuid
-from os.path import splitext, basename
+from datetime import datetime, timezone
+from os.path import basename
 from typing import List, Dict
 
 from lxml import etree
 
 from . import get_logger
+from ._utils import archive_path, metadata_key
 from .chapter import Chapter
-from ._archive import archive_path, metadata_key
 
 # ---------------------------------------- Logger ------------------------------------------------
 
@@ -44,7 +59,6 @@ NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
 OPF_NS = "http://www.idpf.org/2007/opf"
 DC_NS = "http://purl.org/dc/elements/1.1/"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
-
 
 DC_METADATA = ['title', 'creator', 'description', 'date', 'language', 'publisher', 'identifier']
 CALIBRE_METADATA = ['series', 'series_index']
@@ -66,11 +80,11 @@ class Book:
         - cover: filename of the cover image
 
     Notes:
-        - A generated UUID is added as identifier if none is provided.
+        - A generated UUID is added as an identifier if none is provided.
         - Convenience properties expose common metadata as attributes.
         - All data are stored in memory. This includes chapters, style sheets, images,
           and font data as binaries.
-        - Use :func:`publish_book` from the epub module to store all data in an EPUB file.
+        - Use: func:`publish_book` from the epub module to store all data in an EPUB file.
           The necessary OPF file is then created on the fly from the data in the Book structure.
 
     Attributes:
@@ -88,7 +102,7 @@ class Book:
 
     def __init__(self, metadata: Dict | None = None) -> None:
         """
-        Initialize a new Book with optional metadata dict.
+        Initialize a new Book with an optional metadata dict.
 
         Ensures an 'identifier' exists by generating a UUID if missing.
 
@@ -113,7 +127,7 @@ class Book:
 
     def from_contents(self, contents: Dict) -> None:
         """
-        Populate the Book from a contents dictionary, typically extracted from an existing EPUB.
+        Populate the Book from a content dictionary, typically extracted from an existing EPUB.
 
         Args:
             contents (dict): Dictionary with book components. Should have keys:
@@ -140,16 +154,24 @@ class Book:
 
     def add_chapter(self, chapter: Chapter, href: str = None) -> None:
         """
-        Add a new chapter, or replace a chapter using its href as the key.
+        Add a new chapter or replace a chapter using its href as the key.
 
         Args:
             chapter (Chapter): The chapter to add.
-            href (str, optional): Custom href to use as key. If None, uses chapter.href. Defaults to None.
+            href (str, optional): Set the chapter's output href. Defaults to chapter.href.
         """
-        if href:
-            self.chapters[href] = chapter
-        else:
-            self.chapters[chapter.href] = chapter
+        target = chapter.href if href is None else href
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError('A chapter href must be a non-empty string')
+        chapter.href = target
+        for key, existing in list(self.chapters.items()):
+            if existing is chapter:
+                if self._archive is not None and self._archive.groups['chapters'].get(key) is chapter:
+                    # Preserve the import key so ArchiveState can rewrite references.
+                    return
+                if key != target:
+                    del self.chapters[key]
+        self.chapters[target] = chapter
 
     def add_chapters(self, *chapters: Chapter) -> None:
         """
@@ -200,7 +222,7 @@ class Book:
             href (str): Resource URL, possibly containing percent escapes, a
                 query string, or a fragment.
             base_href (str | None): OPF-relative href of the referring chapter
-                or stylesheet. If omitted, href is relative to the OPF itself.
+                or stylesheet. If omitted, the href is relative to the OPF itself.
 
         Returns:
             str | None: Archive path, or None for an external or data URL.
@@ -315,7 +337,7 @@ class Book:
         """
         Add an image asset from a file.
 
-        Reads the file as binary and uses the filename as the key.
+        Reads the file as a binary and uses the filename as the key.
 
         Args:
             file (str): Path to an image file.
@@ -348,7 +370,9 @@ class Book:
         self.cover = cover
         cover_chapter = Chapter.from_cover(cover)
         # Prepend cover chapter to existing chapters
-        self.chapters = {cover_chapter.href: cover_chapter, **self.chapters}
+        self.chapters = {cover_chapter.href: cover_chapter,
+                         **{href: chapter for href, chapter in self.chapters.items()
+                            if href != cover_chapter.href}}
 
     @property
     def cover_image(self) -> bytes | bytearray | None:
@@ -592,7 +616,7 @@ class Book:
             if len(value) > 1 and value[1] is not None:
                 self.metadata["series_index"] = value[1]
         else:
-            self.metadata["series"].append(str(value).strip())
+            self.metadata["series"] = str(value).strip()
 
     # Generic metadata helpers
 
@@ -646,7 +670,7 @@ class Book:
         """
         Generate the nav.xhtml content for EPUB3.
 
-        Creates the navigation document with table of contents and landmarks.
+        Creates the navigation document with the table of contents and landmarks.
 
         Returns:
             str: XHTML content for nav.xhtml file.
@@ -664,8 +688,9 @@ class Book:
         head = etree.SubElement(root, etree.QName(XHTML_NS, "head"))
         etree.SubElement(head, etree.QName(XHTML_NS, "title")).text = title
         etree.SubElement(head, etree.QName(XHTML_NS, "meta"), charset="utf-8")
-        etree.SubElement(head, etree.QName(XHTML_NS, "link"),
-                         href="sgc-nav.css", rel="stylesheet", type="text/css")
+        if 'sgc-nav.css' in self.styles:
+            etree.SubElement(head, etree.QName(XHTML_NS, "link"),
+                             href="sgc-nav.css", rel="stylesheet", type="text/css")
         body = etree.SubElement(root, etree.QName(XHTML_NS, "body"))
         body.set(etree.QName(EPUB_NS, "type"), "frontmatter")
         nav = etree.SubElement(body, etree.QName(XHTML_NS, "nav"), id="toc", role="doc-toc")
@@ -717,7 +742,7 @@ class Book:
 
         root = etree.Element(etree.QName(NCX_NS, "ncx"), nsmap={None: NCX_NS}, version="2005-1")
         head = etree.SubElement(root, etree.QName(NCX_NS, "head"))
-        for name, value in (("dtb:uid", getattr(self, "uid", "bookid")),
+        for name, value in (("dtb:uid", getattr(self, 'uid', self.identifier)),
                             ("dtb:depth", "1"), ("dtb:totalPageCount", "0"),
                             ("dtb:maxPageNumber", "0")):
             etree.SubElement(head, etree.QName(NCX_NS, "meta"), name=name, content=str(value))
@@ -752,21 +777,25 @@ class Book:
         if self._archive is not None:
             root = etree.fromstring(self._archive.package(self))
             return [dict(item.attrib) for item in root.findall("{*}manifest/{*}item")]
-        manifest = [{"id": f"{splitext(c.href)[0]}", "href": c.href, "media-type": "application/xhtml+xml"} for _, c in
-                    self.chapters.items()]
-        if self.cover:
-            manifest.append({"id": "Cover", "href": "Cover.xhtml", "media-type": "application/xhtml+xml"})
-
-        manifest += [{"id": "nav", "href": "nav.xhtml", "media-type": "application/xhtml+xml", "properties": "nav"}]
-        manifest += [{"id": "toc.ncx", "href": "toc.ncx", "media-type": "application/x-dtbncx+xml"}]
-        manifest += [{"id": f"{splitext(href)[0]}", "href": href, "media-type": "text/css"} for i, href in
-                     enumerate(self.styles)]
-        manifest += [{"id": f"{splitext(href)[0]}", "href": href, "media-type": f"image/{splitext(href)[1][1:]}",
-                      **({"properties": "cover-image"} if self.cover and href == self.cover else {})} for href in
-                     self.images]
-        manifest += [{"id": f"{splitext(href)[0]}", "href": href, "media-type": f"font/{splitext(href)[1][1:]}"} for
-                     i, href
-                     in enumerate(self.fonts)]
+        navigation = [
+            {"id": "nav", "href": "nav.xhtml", "media-type": "application/xhtml+xml", "properties": "nav"},
+            {"id": "toc.ncx", "href": "toc.ncx", "media-type": "application/x-dtbncx+xml"},
+        ]
+        manifest = []
+        paths = {item['href'] for item in navigation}
+        for group, media_type in ((self.chapters, 'application/xhtml+xml'),
+                                  (self.styles, 'text/css'), (self.images, None), (self.fonts, None)):
+            for href in group:
+                if href in paths:
+                    raise ValueError(f'Duplicate manifest resource: {href!r}')
+                paths.add(href)
+                item = {'id': f'resource-{len(manifest)}', 'href': href,
+                        'media-type': media_type or mimetypes.guess_type(href)[0] or 'application/octet-stream'}
+                if group is self.images and href == self.cover:
+                    item['properties'] = 'cover-image'
+                manifest.append(item)
+            if group is self.chapters:
+                manifest.extend(navigation)
         return manifest
 
     # ------------------------------------- OPF Property ----------------------------------------
@@ -789,28 +818,36 @@ class Book:
         if self._archive is not None:
             return self._archive.package(self).decode("utf-8")
         root = etree.Element(etree.QName(OPF_NS, "package"), nsmap={None: OPF_NS}, version="3.0")
+        root.set('unique-identifier', 'publication-id')
         metadata = etree.SubElement(root, etree.QName(OPF_NS, "metadata"),
                                     nsmap={"opf": OPF_NS, "dc": DC_NS,
                                            "calibre": "http://calibre.kovidgoyal.net/2009/metadata"})
         for key, value in self.metadata.items():
-            if not value or key == "subject":
+            if not value or key in {"subject", "dcterms:modified"}:
                 continue
             if key in DC_METADATA:
-                etree.SubElement(metadata, etree.QName(DC_NS, key)).text = str(value)
+                element = etree.SubElement(metadata, etree.QName(DC_NS, key))
+                element.text = str(value)
+                if key == 'identifier':
+                    element.set('id', 'publication-id')
             else:
                 name = f"calibre:{key}" if key in CALIBRE_METADATA else str(key)
                 etree.SubElement(metadata, etree.QName(OPF_NS, "meta"), name=name, content=str(value))
         for value in self.subject:
             etree.SubElement(metadata, etree.QName(DC_NS, "subject")).text = str(value)
+        etree.SubElement(metadata, etree.QName(OPF_NS, 'meta'),
+                         property='dcterms:modified').text = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         manifest = etree.SubElement(root, etree.QName(OPF_NS, "manifest"))
-        for item in self.manifest:
+        items = self.manifest
+        identifiers = {item['href']: item['id'] for item in items}
+        for item in items:
             etree.SubElement(manifest, etree.QName(OPF_NS, "item"), attrib=item)
         spine = etree.SubElement(root, etree.QName(OPF_NS, "spine"), toc="toc.ncx")
-        etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref="nav", linear="false")
+        etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref="nav", linear="no")
         for href in self.chapters:
             if href not in {"nav.xhtml", "toc.ncx"}:
-                etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref=splitext(href)[0])
+                etree.SubElement(spine, etree.QName(OPF_NS, "itemref"), idref=identifiers[href])
         if self.guide:
             guide = etree.SubElement(root, etree.QName(OPF_NS, "guide"))
             for item in self.guide:
@@ -841,7 +878,7 @@ class Opf:
     """
     A parser for the OPF (Open Packaging Format) file of an EPUB (content.opf).
 
-    Parses the OPF XML and provides access to its components including metadata,
+    Parses the OPF XML and provides access to its components, including metadata,
     manifest items, spine references, and guide entries.
 
     Attributes:
@@ -852,7 +889,7 @@ class Opf:
         metadata: Returns all metadata tags from <metadata> as a dict {name: text}.
         spine: Returns all idref values from <spine>/<itemref> as a list.
         guide: Reads all <reference> elements from <guide> and returns them as a list of dicts.
-        cover: Returns the href of the cover image if marked with cover-image property.
+        cover: Returns the href of the cover image if marked with a cover-image property.
     """
 
     def __init__(self, opf_xml) -> None:
@@ -882,7 +919,7 @@ class Opf:
             FileNotFoundError: If the file does not exist.
             etree.ParserError: If the XML cannot be parsed.
         """
-        with open(opf_file, "r", encoding="utf-8") as f:
+        with open(opf_file, "rb") as f:
             opf_xml = f.read()
             return cls(opf_xml)
 

@@ -22,6 +22,9 @@
 #
 #
 #
+#
+#
+#
 
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ class Chapter:
     """
     Represents a single chapter (XHTML document) within the EPUB.
 
-    A Chapter in an EPUB book is an XHTML file which is rendered by ebook reader software.
+    A Chapter in an EPUB book is an XHTML file rendered by ebook reader software.
     Imported XHTML is retained in full. Changes to content, title, or styles update
     only the corresponding nodes, preserving the remaining document. New chapters
     generate their HEAD and BODY using XML elements.
@@ -84,7 +87,7 @@ class Chapter:
     @classmethod
     def from_content(cls, href: str, title: str, content: str, styles: str | List[str] | None = None) -> Chapter:
         """
-        Create a Chapter instance from raw HTML content string.
+        Create a Chapter instance from a raw HTML content string.
 
         Strips any existing <body> tags and wraps the content in a full XHTML structure.
         If styles are provided, they are linked in the <head>.
@@ -93,16 +96,14 @@ class Chapter:
             href (str): Filename inside the EPUB archive.
             title (str): Chapter title.
             content (str): Raw HTML content (may include <body> tags which will be stripped).
-            styles (str | list[str] | None, optional): List of stylesheet hrefs or a single href as string.
+            styles (str | list[str] | None, optional): List of stylesheet hrefs or a single href as a string.
                 Defaults to None.
 
         Returns:
             Chapter: A new Chapter instance with the provided content.
 
         Example:
-            >>> chapter1 = Chapter.from_content("chapter1.xhtml", "Chapter 1",
-            ...                                 "<p>Hello world</p>",
-            ...                                 ["styles.css"])
+            >>> chapter1 = Chapter.from_content("chapter1.xhtml", "Chapter 1","<p>Hello world</p>",["styles.css"])
         """
         content = re.sub(r"</?body[^>]*>", "", content, flags=re.IGNORECASE).strip()
 
@@ -131,7 +132,7 @@ class Chapter:
 
         Note:
             This method expects strict XML compliance. For more forgiving parsing,
-            use :meth:`from_html` instead.
+            use: meth:`from_html` instead.
         """
         try:
             doc = etree.fromstring(html.encode("utf-8"),
@@ -147,7 +148,7 @@ class Chapter:
         chapter.styles = styles
         if body is not None:
             # Keep mixed text, tails, and namespace declarations in the fragment.
-            text = etree.Element("text")
+            text = etree.fromstring(b"<text/>")
             text.text = body.text
             chapter.content = (etree.tostring(text, encoding="unicode")[6:-7] if body.text else "")
             chapter.content += "".join(etree.tostring(child, encoding="unicode") for child in body)
@@ -249,7 +250,7 @@ class Chapter:
         """
         Get the full chapter HTML including HEAD and BODY.
 
-        Generates the HEAD section on the fly from the title and styles attributes,
+        Generates the HEAD section on the fly from the title and styles attributes
         and includes the stored body markup without escaping it as plain text.
 
         Returns:

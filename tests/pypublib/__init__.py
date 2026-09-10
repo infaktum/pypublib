@@ -108,7 +108,8 @@ def _load_public_module(module_name: str):
 
 
 chapter = _load_public_module("chapter")
-_archive = _load_public_module("_archive")
+_utils = _load_public_module("_utils")
+archive_state = _load_public_module("archive_state")
 book = _load_public_module("book")
 epub = _load_public_module("epub")
 edit = _load_public_module("edit")

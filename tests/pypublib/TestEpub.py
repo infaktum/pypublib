@@ -304,8 +304,9 @@ class TestEpub(unittest.TestCase):
         self.assertIn("missing.css", issues[0]["missing_styles"])
 
     def test_validate_chapters_missing_data_raises(self):
-        chapter = SimpleNamespace(title="", html="")
-        book = SimpleNamespace(chapters=[chapter])
+        chapter = Chapter.from_content('empty.xhtml', '', '')
+        book = Book()
+        book.add_chapter(chapter)
         with self.assertRaises(ValueError):
             epub.validate_chapters(book)
 

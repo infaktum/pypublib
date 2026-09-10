@@ -32,7 +32,8 @@ from . import get_logger
 from .book import Book
 from .book import Opf
 from .chapter import Chapter
-from ._archive import ArchiveState, archive_path
+from .archive_state import ArchiveState
+from ._utils import archive_path, resource_path
 
 # ---------------------------------------- Logger ------------------------------------------------
 
@@ -322,6 +323,17 @@ def save_book(book: Book, file_path):
         return
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Validate every user-controlled path before writing any resource.
+        content_root = Path(tmpdir) / 'OEBPS'
+        targets = {'nav.xhtml', 'toc.ncx', 'content.opf'}
+        for group in (book.chapters, book.styles, book.images, book.fonts):
+            for href in group:
+                name = href.replace('?', '') if group is book.chapters else href
+                target = resource_path(content_root, name)
+                relative = target.relative_to(content_root.resolve()).as_posix().casefold()
+                if relative in targets:
+                    raise ValueError(f'Resource path collision: {href!r}')
+                targets.add(relative)
         # Write mimetype file (must be first and uncompressed)
         mimetype_path = os.path.join(tmpdir, "mimetype")
         with open(mimetype_path, "w", encoding="utf-8") as f:
@@ -339,7 +351,7 @@ def save_book(book: Book, file_path):
 
         # Save chapters
         for href, chapter in book.chapters.items():
-            chapter_path = Path(os.path.join(oebps_dir, href).replace("?", ""))
+            chapter_path = resource_path(oebps_dir, href.replace('?', ''))
             chapter_path.parent.mkdir(parents=True, exist_ok=True)
             with open(chapter_path, "w", encoding="utf-8") as f:
                 f.write(chapter.html)
@@ -352,21 +364,21 @@ def save_book(book: Book, file_path):
 
         # Save styles
         for name, sheet in book.styles.items():
-            style_path = Path(os.path.join(oebps_dir, name))
+            style_path = resource_path(oebps_dir, name)
             style_path.parent.mkdir(parents=True, exist_ok=True)
             with open(style_path, "w", encoding="utf-8") as f:
                 f.write(sheet)
 
         # Save images
         for name, image in book.images.items():
-            image_path = Path(os.path.join(oebps_dir, name))
+            image_path = resource_path(oebps_dir, name)
             image_path.parent.mkdir(parents=True, exist_ok=True)
             with open(image_path, "wb") as f:
                 f.write(image)
 
         # Save fonts
         for name, font in book.fonts.items():
-            font_path = Path(os.path.join(oebps_dir, name))
+            font_path = resource_path(oebps_dir, name)
             font_path.parent.mkdir(parents=True, exist_ok=True)
             with open(font_path, "wb") as f:
                 f.write(font)
@@ -431,9 +443,14 @@ def validate_chapters(book: Book) -> None:
     Raises:
         ValueError: If any chapter is missing a title or HTML content.
     """
-    for chapter in book.chapters:
-        if not chapter.title or not chapter.html:
+    for chapter in book.chapters.values():
+        if not chapter.title or not chapter.title.strip() or not chapter.content or not chapter.content.strip():
             raise ValueError(f"Invalid chapter: {chapter}")
+        try:
+            etree.fromstring(chapter.html.encode('utf-8'),
+                             parser=etree.XMLParser(resolve_entities=False, no_network=True))
+        except (etree.XMLSyntaxError, ValueError) as exc:
+            raise ValueError(f'Invalid chapter XHTML: {chapter.href}') from exc
 
 
 def validate_book(book: Book) -> list:
