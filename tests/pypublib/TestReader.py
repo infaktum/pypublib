@@ -33,7 +33,7 @@ class Editor:
 class TestReader(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for name in ('tkinter', 'tkinterweb', 'bs4'):
+        for name in ('tkinter', 'tkinterweb'):
             if importlib.util.find_spec(name) is None:
                 raise unittest.SkipTest(f'Optional reader dependency missing: {name}')
         source = Path(__file__).resolve().parents[2] / 'examples/06_reader/reader.py'

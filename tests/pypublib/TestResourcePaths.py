@@ -72,10 +72,10 @@ class TestResourcePaths(unittest.TestCase):
         self.assertEqual(self.book.get_resource('Images/my%20cover.png', 'Styles/main.css'), b'css-relative')
 
     def test_reader_embeds_relative_images_and_styles_without_opening_a_window(self):
-        for name in ('bs4', 'tkinterweb', 'tkinter'):
+        for name in ('tkinterweb', 'tkinter'):
             if importlib.util.find_spec(name) is None:
                 self.skipTest('Optional reader dependency is unavailable: ' + name)
-        from bs4 import BeautifulSoup
+        from lxml import html as lxml_html
 
         path = Path(__file__).resolve().parents[2] / 'examples' / '06_reader' / 'reader.py'
         spec = importlib.util.spec_from_file_location('reader_path_test', path)
@@ -86,9 +86,20 @@ class TestResourcePaths(unittest.TestCase):
         html = self.chapter.html
         images = reader.embed_images(context, html, self.chapter.href)
         preview = reader.embed_stylesheets(context, images, self.chapter.href)
-        soup = BeautifulSoup(preview, 'html.parser')
-        self.assertEqual(soup.img['src'], 'data:image/png;base64,Y29ycmVjdA==')
-        self.assertEqual(soup.style.string, 'p { color: red; }')
+        document = lxml_html.document_fromstring(preview)
+        self.assertEqual(document.find('.//img').get('src'), 'data:image/png;base64,Y29ycmVjdA==')
+        self.assertEqual(document.find('.//style').text, 'p { color: red; }')
         external = '<img src="https://example.com/image.png"/>'
-        self.assertEqual(BeautifulSoup(reader.embed_images(context, external, self.chapter.href),
-                                       'html.parser').img['src'], 'https://example.com/image.png')
+        self.assertEqual(lxml_html.document_fromstring(
+            reader.embed_images(context, external, self.chapter.href)
+        ).find('.//img').get('src'), 'https://example.com/image.png')
+
+        svg = ('<p>Before<svg width="100"><!-- cover -->'
+               '<image xlink:href="../Images/my%20cover.png" height="200"/>'
+               '</svg>After</p><svg><path d="M0 0"/></svg>')
+        document = lxml_html.document_fromstring(reader.embed_svg_images(svg))
+        image = document.find('.//img')
+        self.assertEqual(image.get('src'), '../Images/my%20cover.png')
+        self.assertEqual((image.get('width'), image.get('height')), ('100', '200'))
+        self.assertEqual(image.tail, 'After')
+        self.assertIsNotNone(document.find('.//svg/path'))

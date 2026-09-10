@@ -28,9 +28,8 @@ import mimetypes
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from bs4 import BeautifulSoup
 from tkinterweb import HtmlFrame
-from lxml import etree
+from lxml import etree, html as lxml_html
 
 from pypublib import Book, Chapter, read_book, publish_book
 
@@ -387,31 +386,32 @@ class EpubReaderFrame(tk.Tk):
     @staticmethod
     def embed_svg_images(html):
         """Adapt simple SVG image wrappers for the preview renderer only."""
-        soup = BeautifulSoup(html, "html.parser")
-        for svg in soup.find_all('svg'):
-            children = svg.find_all(recursive=False)
-            if len(children) != 1 or children[0].name != 'image':
+        document = lxml_html.document_fromstring(html.encode('utf-8'), parser=lxml_html.HTMLParser(encoding='utf-8'))
+        for svg in document.iter('svg'):
+            children = [child for child in svg if isinstance(child.tag, str)]
+            if len(children) != 1 or children[0].tag != 'image':
                 continue
             image = children[0]
             href = image.get('href') or image.get('xlink:href')
             if not href:
                 continue
-            replacement = soup.new_tag('img', src=href, alt='')
+            replacement = lxml_html.Element('img', src=href, alt='')
             for attribute in ('width', 'height'):
                 value = svg.get(attribute) or image.get(attribute)
                 if value:
-                    replacement[attribute] = value
-            svg.replace_with(replacement)
-        return str(soup)
+                    replacement.set(attribute, value)
+            replacement.tail = svg.tail
+            svg.getparent().replace(svg, replacement)
+        return lxml_html.tostring(document, encoding='unicode')
 
     def embed_images(self, html, chapter_href=None):
         """
         Ersetzt EPUB-interne <img>-Referenzen durch Data-URLs.
         """
 
-        soup = BeautifulSoup(html, "html.parser")
+        document = lxml_html.document_fromstring(html.encode('utf-8'), parser=lxml_html.HTMLParser(encoding='utf-8'))
 
-        for img in soup.find_all("img"):
+        for img in document.iter('img'):
             src = img.get("src")
 
             if not src or self.book.resolve_resource(src, chapter_href) is None:
@@ -420,7 +420,7 @@ class EpubReaderFrame(tk.Tk):
                 data = self.book.get_resource(src, chapter_href)
                 data_url = self.image_to_data_url(data, self.book.resolve_resource(src, chapter_href))
 
-                img["src"] = data_url
+                img.set('src', data_url)
 
             except Exception as e:
                 print(
@@ -428,7 +428,7 @@ class EpubReaderFrame(tk.Tk):
                     f"{src}: {e}"
                 )
 
-        return str(soup)
+        return lxml_html.tostring(document, encoding='unicode')
 
     @staticmethod
     def image_to_data_url(data, filename):
@@ -453,9 +453,11 @@ class EpubReaderFrame(tk.Tk):
             und den Inhalt der Datei als String zurückgibt.
         """
 
-        soup = BeautifulSoup(html, "html.parser")
+        document = lxml_html.document_fromstring(html.encode('utf-8'), parser=lxml_html.HTMLParser(encoding='utf-8'))
 
-        for link in soup.find_all("link", rel="stylesheet"):
+        for link in document.iter('link'):
+            if 'stylesheet' not in link.get('rel', '').split():
+                continue
 
             href = link.get("href")
             if not href or self.book.resolve_resource(href, chapter_href) is None:
@@ -464,15 +466,16 @@ class EpubReaderFrame(tk.Tk):
             try:
                 css = self.book.get_resource(href, chapter_href).decode('utf-8')
 
-                style = soup.new_tag("style")
-                style.string = css
+                style = lxml_html.Element('style')
+                style.text = css
+                style.tail = link.tail
 
-                link.replace_with(style)
+                link.getparent().replace(link, style)
 
             except Exception as e:
                 print(f"CSS konnte nicht geladen werden: {href}: {e}")
 
-        return str(soup)
+        return lxml_html.tostring(document, encoding='unicode')
 
     def on_toc_select(self, _event):
         sel = self.toc_list.curselection()
