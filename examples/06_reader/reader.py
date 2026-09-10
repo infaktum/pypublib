@@ -30,8 +30,9 @@ from tkinter import ttk, filedialog, messagebox
 
 from bs4 import BeautifulSoup
 from tkinterweb import HtmlFrame
+from lxml import etree
 
-from pypublib.epub import read_book, Book
+from pypublib import Book, Chapter, read_book, publish_book
 
 FONT_HEADER = ("Segoe UI", 12, "bold")
 FONT_HTML = ("Georgia", 18)
@@ -49,7 +50,9 @@ class EpubReaderFrame(tk.Tk):
 
         self.current_file = None
         self.current_chapter_index = 0
-        self.book: Book = None
+        self.book: Book | None = None
+        self.dirty = False
+        self._editor_source = None
         self.chapter_title = None
         self.chapters = []
 
@@ -61,19 +64,22 @@ class EpubReaderFrame(tk.Tk):
         self._build_menu()
         self.build_layout()
         self._bind_shortcuts()
+        self.protocol('WM_DELETE_WINDOW', self.close_reader)
 
     def _build_menu(self):
         menubar = tk.Menu(self)
 
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open EPUB...", command=self.open_epub, accelerator="Ctrl+O")
+        file_menu.add_command(label="Save", command=self.save_epub, accelerator="Ctrl+S")
+        file_menu.add_command(label="Save As...", command=lambda: self.save_epub(save_as=True), accelerator="Ctrl+Shift+S")
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.destroy)
+        file_menu.add_command(label="Exit", command=self.close_reader)
         menubar.add_cascade(label="File", menu=file_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
-        view_menu.add_command(label="Previous Chapter", command=self.prev_chapter, accelerator="Left")
-        view_menu.add_command(label="Next Chapter", command=self.next_chapter, accelerator="Right")
+        view_menu.add_command(label="Previous Chapter", command=self.prev_chapter, accelerator="Alt+Left")
+        view_menu.add_command(label="Next Chapter", command=self.next_chapter, accelerator="Alt+Right")
         menubar.add_cascade(label="Navigate", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -135,6 +141,9 @@ class EpubReaderFrame(tk.Tk):
 
         toolbar = ttk.Frame(self, style="App.TFrame", padding=(10, 8))
         toolbar.pack(side=tk.TOP, fill=tk.X)
+        ttk.Button(toolbar, text="Apply", command=self.apply_edits).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(toolbar, text="Save As", command=lambda: self.save_epub(save_as=True)).pack(side=tk.RIGHT, padx=3)
+        ttk.Button(toolbar, text="Save", command=self.save_epub).pack(side=tk.RIGHT, padx=3)
 
         # Titel links
         ttk.Label(toolbar, text="EPUB Reader", font=("Segoe UI Semibold", 12)).pack(side=tk.LEFT, padx=(0, 20))
@@ -207,6 +216,8 @@ class EpubReaderFrame(tk.Tk):
         raw_y_scroll.configure(command=self.raw_html.yview)
         raw_x_scroll.configure(command=self.raw_html.xview)
         self.raw_html.insert("1.0", "Open an EPUB file to start reading.")
+        self.raw_html.bind('<<Modified>>', self._on_editor_modified)
+        self.raw_html.edit_modified(False)
         self.raw_html.configure(state=tk.DISABLED)
 
         # =========================================================
@@ -225,69 +236,84 @@ class EpubReaderFrame(tk.Tk):
 
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def _build_layout(self):
-        # Toolbar frame
-
-        toolbar = ttk.Frame(self, padding=(8, 6), relief=tk.SOLID)
-        toolbar.pack(side=tk.TOP, fill=tk.X)
-
-        ttk.Button(toolbar, text="Open", command=self.open_epub).pack(side=tk.LEFT)
-        ttk.Button(toolbar, text="◀ Prev", command=self.prev_chapter).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(toolbar, text="Next ▶", command=self.next_chapter).pack(side=tk.LEFT, padx=(6, 0))
-
-        # Main split area
-        main = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True)
-
-        # Left: table of contents
-        toc_frame = ttk.Frame(main, padding=8)
-        ttk.Label(toc_frame, text="Table of Contents").pack(anchor="w", pady=(0, 6))
-
-        self.toc_list = tk.Listbox(toc_frame, exportselection=False)
-        self.toc_list.pack(fill=tk.BOTH, expand=True)
-        self.toc_list.bind("<<ListboxSelect>>", self.on_toc_select)
-
-        main.add(toc_frame, weight=1)
-
-        # ----------------------------------- Right: Editor and preview pane -----------------------------------
-        panes = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
-
-        self.chapter_title = ttk.Label(panes, text="No book opened", font=FONT_HEADER)
-        self.chapter_title.pack(anchor="w", pady=(0, 6))
-
-        main.add(panes, weight=4)
-
-        # ----------------------------------- Editor pane -----------------------------------
-
-        raw_frame = ttk.Frame(panes, padding=8)
-
-        panes.add(raw_frame, weight=1)
-
-        ttk.Label(raw_frame, text="Editor").pack(anchor="w", pady=(0, 6))
-        self.raw_html = tk.Text(raw_frame, wrap=tk.NONE, font=FONT_CODE)
-        self.raw_html.pack(fill=tk.BOTH, expand=True)
-        self.raw_html.insert("1.0", "Open an EPUB file to start reading and editing.")
-
-        self.raw_html.config(state=tk.DISABLED)
-
-        # -------------------------- Preview ------------------------------
-
-        self.html_frame = ttk.Frame(panes, padding=8)
-        panes.add(self.html_frame, weight=1)
-        ttk.Label(self.html_frame, text="Preview HTML").pack(anchor="w", pady=(0, 6))
-        self.html_frame = HtmlFrame(self.html_frame, messages_enabled=False)
-        self.html_frame.pack(fill=tk.BOTH, expand=True)
-
-        self.raw_html.config(state=tk.DISABLED)
-
-        # Status bar
-        self.status = ttk.Label(self, text="Ready", anchor="w", relief=tk.SUNKEN, padding=(8, 4))
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
-
     def _bind_shortcuts(self):
         self.bind("<Control-o>", lambda e: self.open_epub())
-        self.bind("<Left>", lambda e: self.prev_chapter())
-        self.bind("<Right>", lambda e: self.next_chapter())
+        self.bind("<Control-s>", lambda e: self.save_epub())
+        self.bind("<Control-Shift-S>", lambda e: self.save_epub(save_as=True))
+        self.bind("<Alt-Left>", lambda e: self.prev_chapter())
+        self.bind("<Alt-Right>", lambda e: self.next_chapter())
+
+    def _pending_edits(self):
+        return self._editor_source is not None and self.raw_html.get('1.0', 'end-1c') != self._editor_source
+
+    def _on_editor_modified(self, _event=None):
+        if self.raw_html.edit_modified():
+            self.raw_html.edit_modified(False)
+            self._update_title()
+
+    def _update_title(self):
+        marker = ' *' if self.dirty or self._pending_edits() else ''
+        self.title(f'EPUB Reader - {self.current_file or "No book opened"}{marker}')
+
+    def apply_edits(self, refresh=True):
+        if not self.book or not self._pending_edits():
+            return True
+        chapter = self.chapters[self.current_chapter_index]
+        page = self.raw_html.get('1.0', 'end-1c')
+        try:
+            root = etree.fromstring(page.encode('utf-8'),
+                                    parser=etree.XMLParser(resolve_entities=False, no_network=True))
+            namespace = 'http://www.w3.org/1999/xhtml'
+            if root.tag != f'{{{namespace}}}html' or root.find(f'{{{namespace}}}body') is None:
+                raise ValueError('Expected a complete XHTML document with html and body elements.')
+            Chapter.from_xhtml(chapter.href, page)  # Validate before touching the book.
+            chapter.html = page
+        except (etree.XMLSyntaxError, ValueError) as exc:
+            messagebox.showerror('Invalid XHTML', str(exc), parent=self)
+            return False
+        self._editor_source = page
+        self.dirty = True
+        self._refresh_toc()
+        self.chapter_title.config(text=chapter.title)
+        self._update_title()
+        if refresh:
+            self.preview_html.load_html(self.prepare_chapter(chapter.html, chapter.href))
+        self.status.config(text='Changes applied; save the EPUB to write them to disk.')
+        return True
+
+    def save_epub(self, save_as=False):
+        if self.book is None:
+            return False
+        if not self.apply_edits():
+            return False
+        path = self.current_file
+        if save_as or not path:
+            path = filedialog.asksaveasfilename(title='Save EPUB', defaultextension='.epub',
+                                              filetypes=[('EPUB files', '*.epub')])
+        if not path:
+            return False
+        try:
+            publish_book(self.book, path)
+        except Exception as exc:
+            messagebox.showerror('Save failed', str(exc), parent=self)
+            return False
+        self.current_file = path
+        self.dirty = False
+        self._update_title()
+        self.status.config(text=f'Saved: {path}')
+        return True
+
+    def _confirm_discard(self):
+        if not self.dirty and not self._pending_edits():
+            return True
+        answer = messagebox.askyesnocancel('Unsaved changes', 'Save changes before continuing?', parent=self)
+        if answer is None:
+            return False
+        return self.save_epub() if answer else True
+
+    def close_reader(self):
+        if self._confirm_discard():
+            self.destroy()
 
     def open_epub(self):
         path = filedialog.askopenfilename(
@@ -296,13 +322,20 @@ class EpubReaderFrame(tk.Tk):
         )
         if not path:
             return
-
+        if not self._confirm_discard():
+            return
+        book = read_book(path)
+        if book is None:
+            messagebox.showerror('Open failed', f'Could not read EPUB: {path}', parent=self)
+            return
+        if not book.chapters:
+            messagebox.showerror('Open failed', 'This EPUB has no editable XHTML chapters.', parent=self)
+            return
         self.current_file = path
-        self.status.config(text=f"Opened: {path}")
-
-        self.book = read_book(path)
-
-        self.chapters = list(self.book.chapters.values())
+        self.book = book
+        self.chapters = list(book.chapters.values())
+        self.dirty = False
+        self._editor_source = None
 
         self.current_chapter_index = 0
         self._refresh_toc()
@@ -318,6 +351,10 @@ class EpubReaderFrame(tk.Tk):
     def show_chapter(self, index):
         if not self.chapters or not (0 <= index < len(self.chapters)):
             return
+        if not self.apply_edits(refresh=False):
+            self.toc_list.selection_clear(0, tk.END)
+            self.toc_list.selection_set(self.current_chapter_index)
+            return
 
         chapter = self.chapters[index]
         title, content = chapter.title, chapter.html
@@ -325,7 +362,9 @@ class EpubReaderFrame(tk.Tk):
         self.raw_html.config(state=tk.NORMAL)
         self.raw_html.delete("1.0", tk.END)
         self.raw_html.insert("1.0", content)
-        # self.raw_html.config(state=tk.DISABLED)
+        self._editor_source = content
+        self.raw_html.edit_modified(False)
+        self.chapter_title.config(text=title)
 
         self.preview_html.load_html(self.prepare_chapter(content, chapter.href))
 
@@ -335,98 +374,34 @@ class EpubReaderFrame(tk.Tk):
         self.toc_list.see(index)
 
         self.status.config(text=f"{title} ({index + 1}/{len(self.chapters)})")
+        self._update_title()
 
     def prepare_chapter(self, content, chapter_href=None):
 
-        html = self.embed_images(content, chapter_href)
-        html = self.embed_svg_images(html)
+        html = self.embed_svg_images(content)
+        html = self.embed_images(html, chapter_href)
         html = self.embed_stylesheets(html, chapter_href)
 
         return html
 
     @staticmethod
     def embed_svg_images(html):
-        """
-        Ersetzt SVG-Konstrukte der Form
-
-            <svg>
-                <image xlink:href="cover.jpeg">
-            </svg>
-
-        durch ein normales <img>-Element.
-
-        chapter_path:
-            Pfad des aktuellen XHTML-Dokuments innerhalb des EPUBs.
-
-        get_file_content:
-            Funktion, die eine Datei aus dem EPUB liest und
-            deren Inhalt als bytes zurückgibt.
-        """
-
+        """Adapt simple SVG image wrappers for the preview renderer only."""
         soup = BeautifulSoup(html, "html.parser")
-
-        # Alle SVG-Elemente durchsuchen
-        for svg in soup.find_all("svg"):
-            image = svg.find("image")
-
-            if image is None:
+        for svg in soup.find_all('svg'):
+            children = svg.find_all(recursive=False)
+            if len(children) != 1 or children[0].name != 'image':
                 continue
-
-            # SVG kann href oder xlink:href verwenden
-            href = image.get("href")
-
-            if href is None:
-                href = image.get("xlink:href")
-
+            image = children[0]
+            href = image.get('href') or image.get('xlink:href')
             if not href:
                 continue
-
-            # Fragment entfernen, falls vorhanden
-            href = href.split("#")[0]
-
-            """
-
-            try:
-
-                # Data-URL erzeugen
-                data_url = self.image_to_data_url(   data)
-
-
-                # Breite/Höhe des SVG bzw. image übernehmen
-                width = image.get("width")
-                height = image.get("height")
-
-                # Neues img-Element
-                new_img = soup.new_tag("img")
-
-                new_img["src"] = data_url
-
-                if width:
-                    new_img["width"] = width
-
-                if height:
-                    new_img["height"] = height
-
-                # SVG-Attribute übernehmen
-                svg_width = svg.get("width")
-                svg_height = svg.get("height")
-
-                if svg_width:
-                    new_img["width"] = svg_width
-
-                if svg_height:
-                    new_img["height"] = svg_height
-
-                # SVG durch img ersetzen
-                svg.replace_with(new_img)
-
-            except Exception as e:
-
-                print(
-                    f"SVG-Bild konnte nicht geladen werden: "
-                    f"{image_path}: {e}"
-                )
-            """
+            replacement = soup.new_tag('img', src=href, alt='')
+            for attribute in ('width', 'height'):
+                value = svg.get(attribute) or image.get(attribute)
+                if value:
+                    replacement[attribute] = value
+            svg.replace_with(replacement)
         return str(soup)
 
     def embed_images(self, html, chapter_href=None):
